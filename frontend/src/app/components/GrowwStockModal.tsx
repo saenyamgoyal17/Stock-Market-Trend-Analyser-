@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   X, ArrowUpRight, ArrowDownRight, Bookmark,
-  CheckCircle2, Sparkles, Globe, Activity, TrendingUp, TrendingDown,
-  AlertCircle, Zap, Shield, HelpCircle
+  TrendingUp, TrendingDown,
 } from 'lucide-react';
 import {
   StockData, WorldEventItem, fetchYFQuote, fetchMLPredictions,
@@ -107,15 +106,6 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
   const changePct = stock.pct || stock.lastChangePct || 0;
   const isPos = changePct >= 0;
   const cs = getCurr(stock.currency, stock.symbol);
-
-  const prediction = calculateStockPrediction({
-    symbol: stock.symbol,
-    name: stock.name,
-    price,
-    pct: changePct,
-    currency: cs,
-    sector: stock.sector,
-  });
 
   const relatedEvents = events.filter(e =>
     e.stocks?.some(s => s.sym?.toLowerCase() === stock.symbol?.toLowerCase())
@@ -293,6 +283,22 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
             {/* TAB 2: ML PREDICTIONS (XGBOOST, PROPHET, ARIMA, LSTM) */}
             {activeTab === 'prediction' && (
               <div className="space-y-6 animate-fade-in">
+                {/* Embedded Forecasting Chart */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-[15px] font-bold text-[#44475B]">AI Forecasting Chart</h4>
+                    <span className="text-xs text-[#00D09C] font-mono font-semibold">XGBoost 3.4.1 + Multi-Model</span>
+                  </div>
+                  <StockChart
+                    symbol={stock.symbol}
+                    currentPrice={price}
+                    changePct={changePct}
+                    height={290}
+                    currencySymbol={cs}
+                    showMLOverlay={true}
+                  />
+                </div>
+
                 {/* Direction Card */}
                 <div
                   className="p-5 rounded-2xl border"
@@ -372,10 +378,8 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                       { name: 'Prophet', key: 'prophet' as const, color: '#F59E0B' },
                       { name: 'LSTM', key: 'lstm' as const, color: '#A855F7' },
                     ].map((m, i) => {
-                      // Calibrate: compute the % change from the model's own first forecast
-                      // and apply it to the current displayed price
                       const forecast = mlPredictions?.[m.key]?.forecast;
-                      let targetPrice = price * 1.03; // fallback
+                      let targetPrice = price * 1.03;
                       if (forecast && forecast.length > 0) {
                         const firstPred = forecast[0].predicted;
                         const lastPred = forecast[forecast.length - 1]?.predicted || firstPred;
@@ -460,77 +464,89 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                 </button>
               </div>
 
-              {/* Product type */}
-              <div className="flex items-center gap-6 text-sm font-semibold text-[#44475B]">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio" name="product" checked={productType === 'delivery'}
-                    onChange={() => setProductType('delivery')}
-                    style={{ accentColor: '#00D09C' }}
-                  />
-                  Delivery (CNC)
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio" name="product" checked={productType === 'intraday'}
-                    onChange={() => setProductType('intraday')}
-                    style={{ accentColor: '#00D09C' }}
-                  />
-                  Intraday (MIS)
-                </label>
+              {/* Delivery / Intraday */}
+              <div className="flex gap-2">
+                {(['delivery', 'intraday'] as const).map(t => (
+                  <button
+                    key={t}
+                    onClick={() => setProductType(t)}
+                    className="flex-1 py-2 text-xs font-bold rounded-lg border transition-all uppercase"
+                    style={{
+                      borderColor: productType === t ? '#44475B' : '#EAECEF',
+                      background: productType === t ? '#44475B' : '#fff',
+                      color: productType === t ? '#fff' : '#7C7E8C',
+                    }}
+                  >
+                    {t}
+                  </button>
+                ))}
               </div>
 
               {/* Quantity */}
               <div className="space-y-1.5">
-                <div className="flex justify-between text-xs font-mono text-[#7C7E8C]">
-                  <span>Quantity (Shares)</span>
-                  <span>{stock.exchange || 'NSE'}</span>
+                <label className="text-xs font-semibold text-[#7C7E8C]">Shares Quantity</label>
+                <div className="flex items-center rounded-xl border border-[#EAECEF] bg-white overflow-hidden">
+                  <button
+                    onClick={() => setShares(Math.max(1, shares - 1))}
+                    className="px-4 py-2.5 text-lg font-bold text-[#44475B] hover:bg-[#F4F4F7]"
+                  >
+                    -
+                  </button>
+                  <input
+                    type="number"
+                    min="1"
+                    value={shares}
+                    onChange={e => setShares(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="flex-1 text-center font-bold text-sm outline-none text-[#44475B]"
+                  />
+                  <button
+                    onClick={() => setShares(shares + 1)}
+                    className="px-4 py-2.5 text-lg font-bold text-[#44475B] hover:bg-[#F4F4F7]"
+                  >
+                    +
+                  </button>
                 </div>
-                <input
-                  type="number" min="1" value={shares}
-                  onChange={e => setShares(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#EAECEF] text-lg font-bold text-[#44475B] outline-none focus:border-[#00D09C] bg-white font-mono"
-                />
               </div>
 
-              {/* Price */}
+              {/* Limit Price */}
               <div className="space-y-1.5">
-                <div className="flex justify-between text-xs font-mono text-[#7C7E8C]">
-                  <span>Price (Market)</span>
-                  <span className="px-1.5 py-0.5 rounded bg-[#EBFCF7] text-[10px] font-bold text-[#00D09C]">LIVE LTP</span>
-                </div>
-                <div className="px-3.5 py-2.5 rounded-xl border border-[#EAECEF] text-lg font-bold text-[#44475B] bg-white font-mono">
+                <label className="text-xs font-semibold text-[#7C7E8C]">Order Price (At Market)</label>
+                <div className="px-4 py-2.5 rounded-xl border border-[#EAECEF] bg-[#F4F4F7] font-bold text-sm text-[#44475B] font-mono">
                   {cs}{f2(price)}
                 </div>
               </div>
 
-              {/* Summary */}
-              <div className="p-4 rounded-xl bg-white border border-[#EAECEF] text-xs font-mono space-y-2">
+              {/* Balance & Margin */}
+              <div className="pt-3 border-t border-[#EAECEF] space-y-2 text-xs font-mono">
                 <div className="flex justify-between text-[#7C7E8C]">
-                  <span>Required Margin:</span>
+                  <span>Approx. Margin</span>
                   <span className="font-bold text-[#44475B]">{cs}{f2(totalAmt)}</span>
                 </div>
                 <div className="flex justify-between text-[#7C7E8C]">
-                  <span>Available Balance:</span>
+                  <span>Available Balance</span>
                   <span className="font-bold text-[#00D09C]">{cs}1,00,000.00</span>
                 </div>
               </div>
-
-              {orderPlaced && (
-                <div className="p-3.5 rounded-xl bg-[#F0FDF9] border border-[#00D09C]/40 text-[#00D09C] text-xs font-bold flex items-center gap-2 animate-fade-in">
-                  <CheckCircle2 size={16} /> Simulated Order Executed Successfully!
-                </div>
-              )}
             </div>
 
-            <button
-              onClick={handleOrder}
-              className="w-full py-4 rounded-xl font-bold text-sm text-white mt-6 transition-all hover:opacity-95 shadow-md uppercase font-mono"
-              style={{ background: orderType === 'buy' ? '#00D09C' : '#EB5B3C' }}
-            >
-              {orderType === 'buy' ? `BUY ${shares} SHARES · ${cs}${f2(totalAmt)}` : `SELL ${shares} SHARES`}
-            </button>
+            {/* Submit button */}
+            <div className="pt-4">
+              {orderPlaced ? (
+                <div className="py-3.5 rounded-xl bg-[#EBFCF7] text-[#00D09C] text-center font-bold text-sm flex items-center justify-center gap-2">
+                  Order Executed Successfully!
+                </div>
+              ) : (
+                <button
+                  onClick={handleOrder}
+                  className="w-full py-3.5 rounded-xl text-white font-bold text-sm shadow-md transition-transform active:scale-[0.99]"
+                  style={{ background: orderType === 'buy' ? '#00D09C' : '#EB5B3C' }}
+                >
+                  {orderType.toUpperCase()} {shares} SHARES
+                </button>
+              )}
+            </div>
           </div>
+
         </div>
       </div>
     </div>
