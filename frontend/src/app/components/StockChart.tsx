@@ -1,15 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import {
-  AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid,
-  BarChart, Bar,
+  AreaChart, Area, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid,
+  BarChart, Bar, ReferenceDot, Legend,
 } from 'recharts';
-import { fetchYFChart, ChartPoint } from '../../services/api.js';
+import {
+  fetchYFChart, ChartPoint, fetchMLPredictions, MLForecastResults,
+  fetchDetectedFactors, DetectedFactorEvent,
+} from '../../services/api.js';
+import { Sparkles, Activity, AlertCircle, TrendingUp, TrendingDown } from 'lucide-react';
 
 interface StockChartProps {
   symbol: string;
   currentPrice: number;
   changePct: number;
   height?: number;
+  showMLOverlay?: boolean;
+  currencySymbol?: string;
+  onFactorClick?: (factor: DetectedFactorEvent) => void;
 }
 
 const RANGES = [
@@ -21,70 +28,177 @@ const RANGES = [
   { label: '5Y', value: '5y' },
 ];
 
-export const StockChart: React.FC<StockChartProps> = ({ symbol, currentPrice, changePct, height = 300 }) => {
+const IMPACT_COLOR: Record<string, string> = {
+  high: '#EB5B3C',
+  medium: '#F59E0B',
+  low: '#5367FF',
+};
+
+export const StockChart: React.FC<StockChartProps> = ({
+  symbol,
+  currentPrice,
+  changePct,
+  height = 340,
+  showMLOverlay = true,
+  currencySymbol = '₹',
+  onFactorClick,
+}) => {
   const [range, setRange] = useState('1mo');
-  const [data, setData] = useState<ChartPoint[]>([]);
+  const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeModel, setActiveModel] = useState<'xgboost' | 'arima' | 'prophet' | 'lstm'>('xgboost');
+  const [mlPredictions, setMlPredictions] = useState<MLForecastResults | null>(null);
+  const [factors, setFactors] = useState<DetectedFactorEvent[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
 
-    fetchYFChart(symbol, range).then(chart => {
+    Promise.allSettled([
+      fetchYFChart(symbol, range),
+      fetchMLPredictions(symbol, range === '1d' ? '1mo' : range, 15),
+      fetchDetectedFactors(symbol, range),
+    ]).then(([chartRes, mlRes, factorsRes]) => {
       if (cancelled) return;
-      if (chart.length > 0) {
-        setData(chart);
+
+      let baseChart: ChartPoint[] = [];
+      if (chartRes.status === 'fulfilled' && chartRes.value.length > 0) {
+        baseChart = chartRes.value;
       } else {
-        // Fallback: generate synthetic data if YF fails
-        setData(generateFallback(currentPrice, range));
+        baseChart = generateFallback(currentPrice, range);
       }
+
+      let preds: MLForecastResults | null = null;
+      if (mlRes.status === 'fulfilled') {
+        preds = mlRes.value;
+        setMlPredictions(preds);
+      }
+
+      let factorList: DetectedFactorEvent[] = [];
+      if (factorsRes.status === 'fulfilled') {
+        factorList = factorsRes.value;
+        setFactors(factorList);
+      }
+
+      // Merge chart history + ML forward forecast
+      const merged = mergeChartAndML(baseChart, preds, activeModel);
+      setData(merged);
       setLoading(false);
     });
 
     return () => { cancelled = true; };
   }, [symbol, range]);
 
-  const isPositive = data.length >= 2 ? data[data.length - 1].close >= data[0].close : changePct >= 0;
+  // When active ML model changes, re-merge
+  useEffect(() => {
+    if (data.length > 0 && mlPredictions) {
+      const historyOnly = data.filter(d => !d.isForecast);
+      const merged = mergeChartAndML(historyOnly, mlPredictions, activeModel);
+      setData(merged);
+    }
+  }, [activeModel, mlPredictions]);
+
+  const historyPoints = data.filter(d => !d.isForecast);
+  const isPositive = historyPoints.length >= 2 ? historyPoints[historyPoints.length - 1].close >= historyPoints[0].close : changePct >= 0;
   const lineColor = isPositive ? '#00D09C' : '#EB5B3C';
 
-  const minVal = data.length > 0 ? Math.min(...data.map(d => d.close)) * 0.998 : 0;
-  const maxVal = data.length > 0 ? Math.max(...data.map(d => d.close)) * 1.002 : 100;
+  const validValues = data.map(d => [d.close, d.predicted, d.upper, d.lower]).flat().filter((v): v is number => typeof v === 'number' && v > 0);
+  const minVal = validValues.length > 0 ? Math.min(...validValues) * 0.995 : 0;
+  const maxVal = validValues.length > 0 ? Math.max(...validValues) * 1.005 : 100;
 
   return (
-    <div>
-      {/* Range buttons */}
-      <div className="flex gap-1 mb-3">
-        {RANGES.map(r => (
-          <button
-            key={r.value}
-            onClick={() => setRange(r.value)}
-            className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
-            style={{
-              background: range === r.value ? (isPositive ? '#EBFCF7' : '#FEF2F2') : 'transparent',
-              color: range === r.value ? lineColor : '#7C7E8C',
-              border: range === r.value ? `1px solid ${lineColor}30` : '1px solid transparent',
-            }}
-          >
-            {r.label}
-          </button>
-        ))}
+    <div className="space-y-3">
+      {/* Header controls: Range + ML Model Selector */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {/* Timeframe buttons */}
+        <div className="flex gap-1 bg-[#F4F4F7] p-1 rounded-xl">
+          {RANGES.map(r => (
+            <button
+              key={r.value}
+              onClick={() => setRange(r.value)}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+              style={{
+                background: range === r.value ? '#FFFFFF' : 'transparent',
+                color: range === r.value ? '#44475B' : '#7C7E8C',
+                boxShadow: range === r.value ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+              }}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+
+        {/* ML Forecast Selector */}
+        {showMLOverlay && (
+          <div className="flex items-center gap-1 bg-[#EBFCF7] p-1 rounded-xl border border-[#00D09C]/20 text-xs font-semibold">
+            <span className="text-[#00D09C] px-2 flex items-center gap-1 font-mono uppercase text-[11px]">
+              <Sparkles size={13} /> ML Forecast:
+            </span>
+            {(['xgboost', 'arima', 'prophet', 'lstm'] as const).map(m => (
+              <button
+                key={m}
+                onClick={() => setActiveModel(m)}
+                className="px-2.5 py-1 rounded-lg transition-all font-mono uppercase text-[11px]"
+                style={{
+                  background: activeModel === m ? '#00D09C' : 'transparent',
+                  color: activeModel === m ? '#FFFFFF' : '#00D09C',
+                  fontWeight: activeModel === m ? 700 : 500,
+                }}
+              >
+                {m === 'xgboost' ? '⭐ XGBoost' : m}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Chart */}
+      {/* Direction & Backtest Accuracy Pill */}
+      {mlPredictions?.direction && (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 rounded-xl bg-[#F9FAFB] border border-[#EAECEF] text-xs">
+          <div className="flex items-center gap-2">
+            <span className="text-[#7C7E8C] font-semibold font-mono text-[11px]">XGBOOST CLASSIFIER:</span>
+            <span
+              className="px-2.5 py-0.5 rounded-full font-bold uppercase flex items-center gap-1 text-[11px]"
+              style={{
+                background: mlPredictions.direction.direction === 'up' ? '#EBFCF7' : '#FEF2F2',
+                color: mlPredictions.direction.direction === 'up' ? '#00D09C' : '#EB5B3C',
+              }}
+            >
+              {mlPredictions.direction.direction === 'up' ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+              {mlPredictions.direction.direction === 'up' ? '▲ WILL GO UP' : '▼ WILL GO DOWN'} ({(mlPredictions.direction.confidence * 100).toFixed(0)}% Confidence)
+            </span>
+          </div>
+
+          {mlPredictions.direction.backtest_accuracy && (
+            <span className="text-[#7C7E8C] font-mono text-[11px]">
+              Backtest Accuracy: <b className="text-[#44475B]">{(mlPredictions.direction.backtest_accuracy * 100).toFixed(1)}%</b>
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Chart Canvas */}
       <div style={{ height, position: 'relative' }}>
         {loading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-10 rounded-xl">
-            <div className="text-sm text-[#7C7E8C]">Loading real data...</div>
+          <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-10 rounded-2xl">
+            <div className="text-sm font-semibold text-[#7C7E8C] flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#00D09C] animate-pulse" />
+              Loading real market data & ML models...
+            </div>
           </div>
         )}
 
         {data.length > 0 && (
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={data} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
+            <ComposedChart data={data} margin={{ top: 10, right: 10, left: 5, bottom: 5 }}>
               <defs>
                 <linearGradient id={`grad-${symbol}-${range}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={lineColor} stopOpacity={0.15} />
+                  <stop offset="0%" stopColor={lineColor} stopOpacity={0.16} />
                   <stop offset="100%" stopColor={lineColor} stopOpacity={0.02} />
+                </linearGradient>
+                <linearGradient id="ml-band" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#00D09C" stopOpacity={0.15} />
+                  <stop offset="100%" stopColor="#00D09C" stopOpacity={0.03} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F2" vertical={false} />
@@ -93,63 +207,98 @@ export const StockChart: React.FC<StockChartProps> = ({ symbol, currentPrice, ch
                 tick={{ fill: '#9B9EA7', fontSize: 11 }}
                 tickLine={false}
                 axisLine={{ stroke: '#F0F0F2' }}
-                interval="preserveStartEnd"
-                minTickGap={40}
+                minTickGap={35}
               />
               <YAxis
                 domain={[minVal, maxVal]}
                 tick={{ fill: '#9B9EA7', fontSize: 11 }}
                 tickLine={false}
                 axisLine={false}
-                tickFormatter={(v: number) => v >= 1000 ? `${(v/1000).toFixed(1)}k` : v.toFixed(0)}
-                width={55}
+                tickFormatter={(v: number) => `${currencySymbol}${v >= 1000 ? `${(v/1000).toFixed(1)}k` : v.toFixed(0)}`}
+                width={65}
               />
               <Tooltip
                 content={({ active, payload }) => {
                   if (!active || !payload?.[0]) return null;
-                  const p = payload[0].payload as ChartPoint;
+                  const p = payload[0].payload;
                   return (
-                    <div className="px-3 py-2 rounded-lg shadow-lg text-xs"
-                      style={{ background: '#fff', border: '1px solid #EAECEF' }}>
-                      <div className="font-semibold" style={{ color: '#44475B' }}>
-                        {p.close?.toFixed(2)}
+                    <div className="px-3.5 py-2.5 rounded-xl shadow-xl text-xs bg-white border border-[#EAECEF] space-y-1">
+                      <div className="font-bold text-sm text-[#44475B]">
+                        {currencySymbol}{p.close?.toFixed(2) || p.predicted?.toFixed(2)}
                       </div>
-                      <div style={{ color: '#9B9EA7' }}>{p.date}</div>
+                      <div className="text-[#9B9EA7] font-mono">{p.date}</div>
+                      {p.isForecast && (
+                        <div className="text-[11px] font-semibold text-[#00D09C] pt-1 border-t border-[#EAECEF]">
+                          {activeModel.toUpperCase()} Forecast · Band: {currencySymbol}{p.lower?.toFixed(2)} – {currencySymbol}{p.upper?.toFixed(2)}
+                        </div>
+                      )}
                       {p.volume > 0 && (
-                        <div style={{ color: '#9B9EA7' }}>
-                          Vol: {(p.volume / 1e6).toFixed(2)}M
+                        <div className="text-[#7C7E8C]">
+                          Volume: {(p.volume / 1e6).toFixed(2)}M
                         </div>
                       )}
                     </div>
                   );
                 }}
               />
+
+              {/* Confidence Band for ML Forecast */}
+              <Area type="monotone" dataKey="upper" stroke="none" fill="#00D09C" fillOpacity={0.12} name="Forecast Upper" />
+              <Area type="monotone" dataKey="lower" stroke="none" fill="#FFFFFF" fillOpacity={1} name="Forecast Lower" />
+
+              {/* Historical Close Price Area */}
               <Area
                 type="monotone"
                 dataKey="close"
                 stroke={lineColor}
-                strokeWidth={1.5}
+                strokeWidth={2}
                 fill={`url(#grad-${symbol}-${range})`}
                 dot={false}
+                name="Close Price"
                 activeDot={{ r: 4, stroke: lineColor, strokeWidth: 2, fill: '#fff' }}
               />
-            </AreaChart>
-          </ResponsiveContainer>
-        )}
 
-        {!loading && data.length === 0 && (
-          <div className="flex items-center justify-center h-full text-sm text-[#9B9EA7]">
-            No chart data available for {symbol}
-          </div>
+              {/* ML Predicted Forecast Line */}
+              <Line
+                type="monotone"
+                dataKey="predicted"
+                stroke="#F59E0B"
+                strokeWidth={2}
+                strokeDasharray="4 4"
+                dot={false}
+                name={`${activeModel.toUpperCase()} Prediction`}
+              />
+
+              {/* Factor event dots on chart */}
+              {factors.map((factor, idx) => {
+                const matchPoint = data.find(d => d.date === factor.date || d.date?.includes(factor.date));
+                if (!matchPoint || !matchPoint.close) return null;
+                const dotColor = IMPACT_COLOR[factor.impact] || '#F59E0B';
+                return (
+                  <ReferenceDot
+                    key={idx}
+                    x={matchPoint.date}
+                    y={matchPoint.close}
+                    r={5}
+                    fill={dotColor}
+                    stroke="#FFFFFF"
+                    strokeWidth={2}
+                    onClick={() => onFactorClick && onFactorClick(factor)}
+                    style={{ cursor: 'pointer' }}
+                  />
+                );
+              })}
+            </ComposedChart>
+          </ResponsiveContainer>
         )}
       </div>
 
-      {/* Volume bars (small, below chart) */}
+      {/* Volume Histogram */}
       {data.length > 0 && data[0].volume > 0 && (
-        <div style={{ height: 40, marginTop: 4 }}>
+        <div style={{ height: 42 }}>
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 0, right: 5, left: 5, bottom: 0 }}>
-              <Bar dataKey="volume" fill="#EAECEF" radius={[1, 1, 0, 0]} />
+            <BarChart data={data.filter(d => !d.isForecast)} margin={{ top: 0, right: 10, left: 5, bottom: 0 }}>
+              <Bar dataKey="volume" fill="#EAECEF" radius={[2, 2, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -158,13 +307,46 @@ export const StockChart: React.FC<StockChartProps> = ({ symbol, currentPrice, ch
   );
 };
 
+function mergeChartAndML(baseChart: ChartPoint[], mlResults: MLForecastResults | null, model: string): any[] {
+  const points: any[] = baseChart.map(p => ({
+    ...p,
+    predicted: null,
+    upper: null,
+    lower: null,
+    isForecast: false,
+  }));
+
+  const forecastData = (mlResults as any)?.[model]?.forecast as any[] | undefined;
+  if (!forecastData || forecastData.length === 0) return points;
+
+  // Connect last historical point to first prediction
+  if (points.length > 0) {
+    const last = points[points.length - 1];
+    last.predicted = last.close;
+  }
+
+  forecastData.forEach(f => {
+    points.push({
+      date: f.date,
+      close: null,
+      predicted: f.predicted,
+      upper: f.upper,
+      lower: f.lower,
+      volume: 0,
+      isForecast: true,
+    });
+  });
+
+  return points;
+}
+
 function generateFallback(basePrice: number, range: string): ChartPoint[] {
   const counts: Record<string, number> = {
     '1d': 78, '5d': 50, '1mo': 22, '3mo': 65, '1y': 52, '5y': 60,
   };
   const n = counts[range] || 30;
   const pts: ChartPoint[] = [];
-  let p = basePrice * (0.9 + Math.random() * 0.1);
+  let p = basePrice * (0.95 + Math.random() * 0.05);
   const now = Date.now();
 
   for (let i = n; i >= 0; i--) {
