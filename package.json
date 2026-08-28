@@ -1,0 +1,21 @@
+{
+  "name": "stockmarket",
+  "version": "1.0.0",
+  "description": "- Fetches price history for **any Indian (`.NS`/`.BO`) or foreign stock** in its native currency (yfinance) - Detects **external factors** affecting price: news sentiment spikes, unusual volume, and divergence from the sector/market index - Runs **three forecasting models** (ARIMA, Prophet, LSTM) so you can compare classical vs deep-learning approaches — plus a RandomForest **up/down direction classifier** with backtest accuracy - React dashboard shows factors as **clickable markers directly on the price graph**, plus full cards below it",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@vitejs/plugin-react": "^6.1.1",
+    "lucide-react": "^1.35.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "recharts": "^3.10.1",
+    "vite": "^8.2.2"
+  }
+}
