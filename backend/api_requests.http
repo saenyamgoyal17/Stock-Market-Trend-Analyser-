@@ -1,0 +1,45 @@
+### PulseAI Backend — VS Code REST Client Test File
+### (Install "REST Client" or "Thunder Client" in VS Code to click "Send Request" above any query)
+
+@baseUrl = http://localhost:3000
+
+### 1. Health Check
+GET {{baseUrl}}/health
+
+### 2. Swagger / OpenAPI Documentation
+GET {{baseUrl}}/docs
+
+### 3. Search Global Stocks
+GET {{baseUrl}}/v1/stocks/search?q=Apple&limit=5
+
+### 4. Top Market Gainers
+GET {{baseUrl}}/v1/stocks/movers/gainers?market=US&limit=5
+
+### 5. Market Status
+GET {{baseUrl}}/v1/markets
+
+### 6. Latest World Events
+GET {{baseUrl}}/v1/events/latest?limit=5
+
+### 7. Currency Conversion (USD to INR)
+GET {{baseUrl}}/v1/fx/convert?amount=100&from=USD&to=INR
+
+### 8. User Auth: Register
+POST {{baseUrl}}/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "trader@pulseai.com",
+  "password": "SecurePassword123!",
+  "name": "Alex Trader"
+}
+
+### 9. User Auth: Login
+# @name login
+POST {{baseUrl}}/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "trader@pulseai.com",
+  "password": "SecurePassword123!"
+}
