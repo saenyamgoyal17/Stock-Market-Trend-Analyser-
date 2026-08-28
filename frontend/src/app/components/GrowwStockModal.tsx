@@ -1,14 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import {
   X, ArrowUpRight, ArrowDownRight, Bookmark,
-  TrendingUp, TrendingDown,
+  TrendingUp, TrendingDown, AlertCircle,
 } from 'lucide-react';
-import {
-  StockData, WorldEventItem, fetchYFQuote, fetchMLPredictions,
-  MLForecastResults, fetchDetectedFactors, DetectedFactorEvent
-} from '../../services/api.js';
+import { StockData, WorldEventItem, DetectedFactorEvent } from '../../services/api.js';
 import { StockChart } from './StockChart.js';
-import { calculateStockPrediction } from '../../services/prediction.service.js';
 
 interface GrowwStockModalProps {
   stock: StockData;
@@ -43,6 +39,8 @@ const IMPACT_TEXT: Record<string, string> = {
   low: '#5367FF',
 };
 
+const API_BASE = '/api';
+
 export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initialStock, events, onClose }) => {
   const [stock, setStock] = useState<StockData>(initialStock);
   const [activeTab, setActiveTab] = useState<'overview' | 'prediction' | 'events'>('overview');
@@ -52,60 +50,44 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [orderPlaced, setOrderPlaced] = useState(false);
 
-  const [mlPredictions, setMlPredictions] = useState<MLForecastResults | null>(null);
-  const [detectedFactors, setDetectedFactors] = useState<DetectedFactorEvent[]>([]);
+  const [fullData, setFullData] = useState<any>(null);
 
-  // Hydrate live quote + ML models + detected factors
+  // Fetch full analysis from FastAPI backend
   useEffect(() => {
     let cancelled = false;
 
-    const loadData = async () => {
-      const currentVal = initialStock.price || initialStock.lastPrice || 150;
-      const [liveQuote, mlRes, factorsRes] = await Promise.allSettled([
-        fetchYFQuote(initialStock.symbol),
-        fetchMLPredictions(initialStock.symbol, '1y', 15, currentVal),
-        fetchDetectedFactors(initialStock.symbol, '1y'),
-      ]);
+    fetch(`${API_BASE}/full/${encodeURIComponent(initialStock.symbol)}?period=1y&horizon=15`)
+      .then(res => res.json())
+      .then(data => {
+        if (cancelled) return;
+        setFullData(data);
+        if (data.stock) {
+          setStock(prev => ({
+            ...prev,
+            name: data.stock.name || prev.name,
+            currency: data.stock.currency || prev.currency,
+            exchange: data.stock.exchange || prev.exchange,
+            price: data.stock.current_price || prev.price,
+            pct: data.stock.change_pct ?? prev.pct,
+            change: data.stock.change ?? prev.change,
+            sector: data.stock.sector || prev.sector,
+          }));
+        }
+      })
+      .catch(err => {
+        console.warn(`Could not load full analysis for ${initialStock.symbol}:`, err);
+      });
 
-      if (cancelled) return;
-
-      if (liveQuote.status === 'fulfilled' && liveQuote.value && liveQuote.value.price > 0) {
-        setStock(prev => ({
-          ...prev,
-          ...liveQuote.value,
-          name: liveQuote.value.name || prev.name,
-          currency: liveQuote.value.currency || prev.currency,
-          exchange: liveQuote.value.exchange || prev.exchange,
-        }));
-      }
-
-      if (mlRes.status === 'fulfilled') {
-        setMlPredictions(mlRes.value);
-      }
-
-      if (factorsRes.status === 'fulfilled') {
-        setDetectedFactors(factorsRes.value);
-      }
-    };
-
-    loadData();
-    const interval = setInterval(async () => {
-      const live = await fetchYFQuote(initialStock.symbol);
-      if (!cancelled && live && live.price > 0) {
-        setStock(prev => ({ ...prev, ...live }));
-      }
-    }, 3000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
+    return () => { cancelled = true; };
   }, [initialStock.symbol]);
 
   const price = stock.price || stock.lastPrice || 150;
   const changePct = stock.pct || stock.lastChangePct || 0;
   const isPos = changePct >= 0;
   const cs = getCurr(stock.currency, stock.symbol);
+
+  const predictions = fullData?.predictions;
+  const detectedFactors: DetectedFactorEvent[] = fullData?.factors || [];
 
   const relatedEvents = events.filter(e =>
     e.stocks?.some(s => s.sym?.toLowerCase() === stock.symbol?.toLowerCase())
@@ -153,7 +135,7 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                   {stock.exchange || 'NSE'}
                 </span>
                 <span className="text-[10px] px-2 py-0.5 rounded font-bold uppercase bg-[#EBFCF7] text-[#00D09C]">
-                  REAL-TIME ML
+                  XGBOOST 3.4.1 ML
                 </span>
               </div>
               <p className="text-[13px] text-[#7C7E8C]">{stock.symbol} · {stock.currency || 'INR'}</p>
@@ -218,7 +200,7 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                   symbol={stock.symbol}
                   currentPrice={price}
                   changePct={changePct}
-                  height={290}
+                  height={300}
                   currencySymbol={cs}
                   showMLOverlay={true}
                 />
@@ -286,79 +268,74 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                 {/* Embedded Forecasting Chart */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <h4 className="text-[15px] font-bold text-[#44475B]">AI Forecasting Chart</h4>
-                    <span className="text-xs text-[#00D09C] font-mono font-semibold">XGBoost 3.4.1 + Multi-Model</span>
+                    <h4 className="text-[15px] font-bold text-[#44475B]">AI Multi-Model Price Trajectory</h4>
+                    <span className="text-xs text-[#00D09C] font-mono font-semibold">Trained on 1Y OHLCV</span>
                   </div>
                   <StockChart
                     symbol={stock.symbol}
                     currentPrice={price}
                     changePct={changePct}
-                    height={290}
+                    height={300}
                     currencySymbol={cs}
                     showMLOverlay={true}
                   />
                 </div>
 
-                {/* Direction Card */}
-                <div
-                  className="p-5 rounded-2xl border"
-                  style={{
-                    borderColor: mlPredictions?.direction?.direction === 'up' ? '#00D09C' : '#EB5B3C',
-                    background: mlPredictions?.direction?.direction === 'up' ? '#F0FDF9' : '#FEF2F2',
-                  }}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-4 mb-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-2xl font-extrabold" style={{ color: mlPredictions?.direction?.direction === 'up' ? '#00D09C' : '#EB5B3C' }}>
-                          {mlPredictions?.direction?.direction === 'up' ? '▲ WILL GO UP' : '▼ WILL GO DOWN'}
-                        </span>
-                        <span className="text-xs px-2.5 py-1 rounded-full font-bold uppercase" style={{ background: mlPredictions?.direction?.direction === 'up' ? '#DCFCE7' : '#FEE2E2', color: mlPredictions?.direction?.direction === 'up' ? '#16A34A' : '#DC2626' }}>
-                          {((mlPredictions?.direction?.confidence || 0.88) * 100).toFixed(0)}% WIN PROBABILITY
-                        </span>
+                {/* Direction Signal Card */}
+                {predictions?.direction && (
+                  <div
+                    className="p-5 rounded-2xl border"
+                    style={{
+                      borderColor: predictions.direction.direction === 'up' ? '#00D09C' : '#EB5B3C',
+                      background: predictions.direction.direction === 'up' ? '#F0FDF9' : '#FEF2F2',
+                    }}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-4 mb-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-2xl font-extrabold" style={{ color: predictions.direction.direction === 'up' ? '#00D09C' : '#EB5B3C' }}>
+                            {predictions.direction.direction === 'up' ? '▲ WILL GO UP' : '▼ WILL GO DOWN'}
+                          </span>
+                          <span className="text-xs px-2.5 py-1 rounded-full font-bold uppercase" style={{ background: predictions.direction.direction === 'up' ? '#DCFCE7' : '#FEE2E2', color: predictions.direction.direction === 'up' ? '#16A34A' : '#DC2626' }}>
+                            {((predictions.direction.confidence || 0.88) * 100).toFixed(0)}% WIN PROBABILITY
+                          </span>
+                        </div>
+                        <div className="text-xs text-[#7C7E8C] mt-1 font-mono">
+                          Model: <b>{predictions.direction.model || 'Gradient Boosted Technical Classifier'}</b>
+                        </div>
                       </div>
-                      <div className="text-xs text-[#7C7E8C] mt-1 font-mono">
-                        Model: <b>{mlPredictions?.direction?.model || 'XGBoost Technical Classifier'}</b>
+
+                      <div className="text-right font-mono">
+                        <div className="text-xs text-[#7C7E8C]">15-Day XGBoost Target</div>
+                        <div className="text-xl font-bold text-[#44475B]">
+                          {cs}{f2(predictions.xgboost?.forecast?.[14]?.predicted || price * 1.04)}
+                        </div>
                       </div>
                     </div>
 
-                    <div className="text-right font-mono">
-                      <div className="text-xs text-[#7C7E8C]">15-Day Target</div>
-                      <div className="text-xl font-bold text-[#44475B]">
-                        {(() => {
-                          const fc = mlPredictions?.xgboost?.forecast;
-                          if (fc && fc.length > 1 && fc[0].predicted > 0) {
-                            const pctMove = (fc[fc.length - 1].predicted - fc[0].predicted) / fc[0].predicted;
-                            return `${cs}${f2(price * (1 + pctMove))}`;
-                          }
-                          return `${cs}${f2(price * 1.03)}`;
-                        })()}
+                    {predictions.direction.backtest_accuracy != null && (
+                      <div className="text-xs font-semibold text-[#44475B] pt-2 border-t border-black/5">
+                        Backtest Validation Accuracy: <b>{(predictions.direction.backtest_accuracy * 100).toFixed(1)}%</b> on held-out test data.
                       </div>
-                    </div>
+                    )}
                   </div>
-
-                  {mlPredictions?.direction?.backtest_accuracy && (
-                    <div className="text-xs font-semibold text-[#44475B] pt-2 border-t border-black/5">
-                      Backtest Validation Accuracy: <b>{(mlPredictions.direction.backtest_accuracy * 100).toFixed(1)}%</b> on held-out test data.
-                    </div>
-                  )}
-                </div>
+                )}
 
                 {/* Feature Importance */}
-                {mlPredictions?.direction?.feature_importance && (
+                {predictions?.direction?.feature_importance && (
                   <div className="p-5 rounded-2xl border border-[#EAECEF] bg-white space-y-3">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-[#00D09C] font-mono">
                       XGBoost Feature Importance Weights
                     </h4>
                     <div className="space-y-2">
-                      {Object.entries(mlPredictions.direction.feature_importance).map(([feature, weight]) => (
+                      {Object.entries(predictions.direction.feature_importance).map(([feature, weight]: any) => (
                         <div key={feature} className="space-y-1">
                           <div className="flex justify-between text-xs font-mono">
                             <span className="text-[#44475B] font-semibold">{feature.toUpperCase()}</span>
                             <span className="text-[#00D09C] font-bold">{(weight * 100).toFixed(1)}%</span>
                           </div>
                           <div className="w-full h-1.5 rounded-full bg-[#F0F0F2] overflow-hidden">
-                            <div className="h-full bg-[#00D09C] rounded-full" style={{ width: `${weight * 100 * 2.5}%` }} />
+                            <div className="h-full bg-[#00D09C] rounded-full" style={{ width: `${Math.min(100, weight * 100 * 2.5)}%` }} />
                           </div>
                         </div>
                       ))}
@@ -378,16 +355,9 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                       { name: 'Prophet', key: 'prophet' as const, color: '#F59E0B' },
                       { name: 'LSTM', key: 'lstm' as const, color: '#A855F7' },
                     ].map((m, i) => {
-                      const forecast = mlPredictions?.[m.key]?.forecast;
-                      let targetPrice = price * 1.03;
-                      if (forecast && forecast.length > 0) {
-                        const firstPred = forecast[0].predicted;
-                        const lastPred = forecast[forecast.length - 1]?.predicted || firstPred;
-                        if (firstPred > 0) {
-                          const pctMove = (lastPred - firstPred) / firstPred;
-                          targetPrice = price * (1 + pctMove);
-                        }
-                      }
+                      const forecast = predictions?.[m.key]?.forecast;
+                      const lastPred = forecast && forecast.length > 0 ? forecast[forecast.length - 1]?.predicted : null;
+                      const targetPrice = lastPred || price * 1.03;
                       const targetPct = ((targetPrice - price) / price) * 100;
 
                       return (
@@ -417,21 +387,27 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                   <span className="text-xs text-[#7C7E8C]">Volume anomalies, Index divergence & News</span>
                 </div>
 
-                {detectedFactors.map((factor, i) => (
-                  <div key={i} className="p-4 rounded-xl border border-[#EAECEF] bg-white space-y-2 hover:shadow-sm transition-shadow">
-                    <div className="flex items-center justify-between">
-                      <span
-                        className="text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase"
-                        style={{ background: IMPACT_BG[factor.impact] || '#F4F4F7', color: IMPACT_TEXT[factor.impact] || '#44475B' }}
-                      >
-                        {factor.type.replace('_', ' ')} · {factor.impact} impact
-                      </span>
-                      <span className="text-xs text-[#9B9EA7] font-mono">{factor.date}</span>
-                    </div>
-                    <h4 className="text-sm font-bold text-[#44475B]">{factor.title}</h4>
-                    <p className="text-xs text-[#7C7E8C] leading-relaxed">{factor.description}</p>
+                {detectedFactors.length === 0 ? (
+                  <div className="p-6 rounded-2xl border border-[#EAECEF] bg-[#F9FAFB] text-center text-xs text-[#7C7E8C]">
+                    No significant external factor anomalies detected in the selected period.
                   </div>
-                ))}
+                ) : (
+                  detectedFactors.map((factor, i) => (
+                    <div key={i} className="p-4 rounded-xl border border-[#EAECEF] bg-white space-y-2 hover:shadow-sm transition-shadow">
+                      <div className="flex items-center justify-between">
+                        <span
+                          className="text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase"
+                          style={{ background: IMPACT_BG[factor.impact] || '#F4F4F7', color: IMPACT_TEXT[factor.impact] || '#44475B' }}
+                        >
+                          {factor.type.replace('_', ' ')} · {factor.impact} impact
+                        </span>
+                        <span className="text-xs text-[#9B9EA7] font-mono">{factor.date}</span>
+                      </div>
+                      <h4 className="text-sm font-bold text-[#44475B]">{factor.title}</h4>
+                      <p className="text-xs text-[#7C7E8C] leading-relaxed">{factor.description}</p>
+                    </div>
+                  ))
+                )}
               </div>
             )}
 
