@@ -61,9 +61,10 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
     let cancelled = false;
 
     const loadData = async () => {
+      const currentVal = initialStock.price || initialStock.lastPrice || 150;
       const [liveQuote, mlRes, factorsRes] = await Promise.allSettled([
         fetchYFQuote(initialStock.symbol),
-        fetchMLPredictions(initialStock.symbol, '1y', 15),
+        fetchMLPredictions(initialStock.symbol, '1y', 15, currentVal),
         fetchDetectedFactors(initialStock.symbol, '1y'),
       ]);
 
