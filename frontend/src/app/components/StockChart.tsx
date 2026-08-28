@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  AreaChart, Area, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid,
-  BarChart, Bar, ReferenceDot, ReferenceLine,
+  Area, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid,
+  BarChart, Bar, ReferenceDot,
 } from 'recharts';
 import {
   fetchYFChart, ChartPoint, fetchMLPredictions, MLForecastResults,
@@ -34,12 +34,8 @@ const IMPACT_COLOR: Record<string, string> = {
   low: '#5367FF',
 };
 
-/**
- * Format a forecast ISO date string (e.g. "2026-09-01") to match the chart's
- * date label format for the given range so the x-axis stays consistent.
- */
 function formatForecastDate(isoDate: string, range: string): string {
-  const d = new Date(isoDate + 'T12:00:00'); // noon to avoid timezone shift
+  const d = new Date(isoDate.includes('T') ? isoDate : `${isoDate}T12:00:00`);
   if (range === '1d' || range === '5d') {
     return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
   }
@@ -67,34 +63,31 @@ export const StockChart: React.FC<StockChartProps> = ({
   const [isForecastVisible, setIsForecastVisible] = useState(true);
   const [baseChart, setBaseChart] = useState<ChartPoint[]>([]);
 
-  // Fetch chart + ML data when symbol or range changes
+  // Fetch chart history + ML forecasts
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
 
-    // For ML, always use 1y history regardless of chart range — the models need enough data
-    const mlPeriod = '1y';
-
     Promise.allSettled([
       fetchYFChart(symbol, range),
-      fetchMLPredictions(symbol, mlPeriod, 15, currentPrice),
-      fetchDetectedFactors(symbol, mlPeriod),
+      fetchMLPredictions(symbol, '1y', 15, currentPrice),
+      fetchDetectedFactors(symbol, '1y'),
     ]).then(([chartRes, mlRes, factorsRes]) => {
       if (cancelled) return;
 
       let chart: ChartPoint[] = [];
-      if (chartRes.status === 'fulfilled' && chartRes.value.length > 0) {
+      if (chartRes.status === 'fulfilled' && chartRes.value && chartRes.value.length > 0) {
         chart = chartRes.value;
       } else {
-        chart = generateFallback(currentPrice, range);
+        chart = generateFallback(currentPrice || 100, range);
       }
       setBaseChart(chart);
 
-      if (mlRes.status === 'fulfilled') {
+      if (mlRes.status === 'fulfilled' && mlRes.value) {
         setMlPredictions(mlRes.value);
       }
 
-      if (factorsRes.status === 'fulfilled') {
+      if (factorsRes.status === 'fulfilled' && factorsRes.value) {
         setFactors(factorsRes.value);
       }
 
@@ -104,7 +97,7 @@ export const StockChart: React.FC<StockChartProps> = ({
     return () => { cancelled = true; };
   }, [symbol, range, currentPrice]);
 
-  // Merge chart + predictions whenever base data, model selection, or visibility changes
+  // Merge history with ML forecast
   const mergedData = useMemo(() => {
     return mergeChartAndML(baseChart, mlPredictions, activeModel, range, isForecastVisible);
   }, [baseChart, mlPredictions, activeModel, range, isForecastVisible]);
@@ -115,11 +108,11 @@ export const StockChart: React.FC<StockChartProps> = ({
 
   const historyPoints = data.filter(d => !d.isForecast);
   const isPositive = historyPoints.length >= 2
-    ? historyPoints[historyPoints.length - 1].close >= historyPoints[0].close
-    : changePct >= 0;
+    ? (historyPoints[historyPoints.length - 1].close ?? currentPrice) >= (historyPoints[0].close ?? currentPrice)
+    : (changePct >= 0);
   const lineColor = isPositive ? '#00D09C' : '#EB5B3C';
 
-  // Tight Y-axis domain — only from values actually present
+  // Dynamic tight Y-axis domain
   const yDomain = useMemo(() => {
     const vals: number[] = [];
     for (const d of data) {
@@ -131,12 +124,9 @@ export const StockChart: React.FC<StockChartProps> = ({
     if (vals.length === 0) return [0, 100];
     const mn = Math.min(...vals);
     const mx = Math.max(...vals);
-    const pad = (mx - mn) * 0.06 || mx * 0.02;
+    const pad = (mx - mn) * 0.05 || mx * 0.02;
     return [+(mn - pad).toFixed(2), +(mx + pad).toFixed(2)];
   }, [data]);
-
-  // Find the index of the last historical point (transition point)
-  const transitionIdx = data.findIndex(d => d.isForecast) - 1;
 
   return (
     <div className="space-y-3">
@@ -169,7 +159,7 @@ export const StockChart: React.FC<StockChartProps> = ({
               title="Toggle Forecast Overlay"
             >
               {isForecastVisible ? <Eye size={12} /> : <EyeOff size={12} />}
-              <span className="font-mono uppercase">AI:</span>
+              <span className="font-mono uppercase">AI Forecast:</span>
             </button>
 
             {(['xgboost', 'arima', 'prophet', 'lstm'] as const).map(m => (
@@ -186,7 +176,7 @@ export const StockChart: React.FC<StockChartProps> = ({
                   fontWeight: activeModel === m && isForecastVisible ? 700 : 500,
                 }}
               >
-                {m === 'xgboost' ? '⭐ XGB' : m}
+                {m === 'xgboost' ? '⭐ XGBoost' : m}
               </button>
             ))}
           </div>
@@ -206,25 +196,25 @@ export const StockChart: React.FC<StockChartProps> = ({
               }}
             >
               {mlPredictions.direction.direction === 'up' ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-              {mlPredictions.direction.direction === 'up' ? '▲ BULLISH' : '▼ BEARISH'} ({(mlPredictions.direction.confidence * 100).toFixed(0)}%)
+              {mlPredictions.direction.direction === 'up' ? '▲ BULLISH' : '▼ BEARISH'} ({(mlPredictions.direction.confidence * 100).toFixed(0)}% Probability)
             </span>
           </div>
 
           {mlPredictions.direction.backtest_accuracy != null && mlPredictions.direction.backtest_accuracy > 0 && (
             <span className="text-[#7C7E8C] font-mono text-[11px]">
-              Backtest: <b className="text-[#44475B]">{(mlPredictions.direction.backtest_accuracy * 100).toFixed(1)}%</b>
+              Backtest Accuracy: <b className="text-[#44475B]">{(mlPredictions.direction.backtest_accuracy * 100).toFixed(1)}%</b>
             </span>
           )}
         </div>
       )}
 
-      {/* Chart Canvas */}
+      {/* Main Chart Canvas */}
       <div style={{ height, position: 'relative' }}>
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-10 rounded-2xl">
             <div className="text-sm font-semibold text-[#7C7E8C] flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-[#00D09C] animate-pulse" />
-              Loading chart & ML models...
+              Loading real market data & ML models...
             </div>
           </div>
         )}
@@ -234,12 +224,12 @@ export const StockChart: React.FC<StockChartProps> = ({
             <ComposedChart data={data} margin={{ top: 10, right: 10, left: 5, bottom: 5 }}>
               <defs>
                 <linearGradient id={`grad-${symbol}-${range}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={lineColor} stopOpacity={0.16} />
-                  <stop offset="100%" stopColor={lineColor} stopOpacity={0.02} />
+                  <stop offset="0%" stopColor={lineColor} stopOpacity={0.18} />
+                  <stop offset="100%" stopColor={lineColor} stopOpacity={0.01} />
                 </linearGradient>
-                <linearGradient id={`forecast-band-${symbol}`} x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id={`forecast-grad-${symbol}`} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#F59E0B" stopOpacity={0.12} />
-                  <stop offset="100%" stopColor="#F59E0B" stopOpacity={0.03} />
+                  <stop offset="100%" stopColor="#F59E0B" stopOpacity={0.01} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F2" vertical={false} />
@@ -255,7 +245,7 @@ export const StockChart: React.FC<StockChartProps> = ({
                 tick={{ fill: '#9B9EA7', fontSize: 11 }}
                 tickLine={false}
                 axisLine={false}
-                tickFormatter={(v: number) => `${currencySymbol}${v >= 10000 ? `${(v/1000).toFixed(1)}k` : v >= 1000 ? `${(v/1000).toFixed(1)}k` : v.toFixed(0)}`}
+                tickFormatter={(v: number) => `${currencySymbol}${v >= 1000 ? `${(v/1000).toFixed(1)}k` : v.toFixed(0)}`}
                 width={65}
               />
               <Tooltip
@@ -284,52 +274,33 @@ export const StockChart: React.FC<StockChartProps> = ({
                 }}
               />
 
-              {/* Forecast confidence band (render below the lines) */}
-              {isForecastVisible && (
-                <>
-                  <Area type="monotone" dataKey="upper" stroke="none" fill={`url(#forecast-band-${symbol})`} fillOpacity={1} name="Upper Band" />
-                  <Area type="monotone" dataKey="lower" stroke="none" fill="#FFFFFF" fillOpacity={1} name="Lower Band" />
-                </>
-              )}
-
-              {/* Historical price area */}
+              {/* Historical Price Area */}
               <Area
                 type="monotone"
                 dataKey="close"
                 stroke={lineColor}
-                strokeWidth={2}
+                strokeWidth={2.2}
                 fill={`url(#grad-${symbol}-${range})`}
                 dot={false}
-                name="Price"
-                connectNulls={false}
+                name="Historical Price"
                 activeDot={{ r: 4, stroke: lineColor, strokeWidth: 2, fill: '#fff' }}
               />
 
-              {/* ML Predicted line — dashed, connects from last close seamlessly */}
+              {/* ML Forecast Forward Prediction Line */}
               {isForecastVisible && (
                 <Line
                   type="monotone"
                   dataKey="predicted"
                   stroke="#F59E0B"
-                  strokeWidth={2.2}
-                  strokeDasharray="6 3"
-                  dot={false}
-                  connectNulls={false}
+                  strokeWidth={2.4}
+                  strokeDasharray="5 4"
+                  dot={{ r: 2.5, fill: '#F59E0B', stroke: '#fff', strokeWidth: 1 }}
+                  activeDot={{ r: 5, stroke: '#F59E0B', strokeWidth: 2, fill: '#fff' }}
                   name={`${activeModel.toUpperCase()} Forecast`}
                 />
               )}
 
-              {/* Vertical reference line at forecast start */}
-              {isForecastVisible && transitionIdx >= 0 && data[transitionIdx] && (
-                <ReferenceLine
-                  x={data[transitionIdx].date}
-                  stroke="#F59E0B"
-                  strokeDasharray="3 3"
-                  strokeOpacity={0.4}
-                />
-              )}
-
-              {/* Factor event dots on chart */}
+              {/* Factor event reference dots on chart */}
               {factors.map((factor, idx) => {
                 const matchPoint = data.find(d => d.date === factor.date || d.date?.includes(factor.date?.slice(5)));
                 if (!matchPoint || !matchPoint.close) return null;
@@ -367,18 +338,9 @@ export const StockChart: React.FC<StockChartProps> = ({
   );
 };
 
-// ════════════════════════════════════════════════════════════════════
-// MERGE LOGIC — the heart of the chart-to-prediction connection
-// ════════════════════════════════════════════════════════════════════
-
 /**
  * Merges historical chart points with forward ML forecast.
- *
- * KEY FIXES:
- * 1. Formats forecast dates to match chart date format so the x-axis is continuous
- * 2. Anchors forecast[0] to the last historical close price exactly
- * 3. Rescales all forecast values as relative % moves from anchor if there's any mismatch
- * 4. Sets `predicted` on the last historical point so the line connects seamlessly
+ * Accurately bounds the forward steps based on active chart timeframe.
  */
 function mergeChartAndML(
   baseChart: ChartPoint[],
@@ -387,7 +349,6 @@ function mergeChartAndML(
   range: string,
   isForecastVisible: boolean,
 ): any[] {
-  // Convert historical points, with null prediction fields
   const points: any[] = baseChart.map(p => ({
     ...p,
     predicted: null,
@@ -405,43 +366,37 @@ function mergeChartAndML(
   const anchorPrice = lastPoint.close;
   if (!anchorPrice || anchorPrice <= 0) return points;
 
-  // The raw forecast's first predicted value from the backend
   const rawFirst = forecastData[0].predicted;
   if (!rawFirst || rawFirst <= 0) return points;
 
-  // Set predicted on the last historical point = anchorPrice (connection point)
+  // Seamless anchor connection point
   lastPoint.predicted = anchorPrice;
 
-  // For each forecast step, compute the rescaled prediction anchored to the chart's last close.
-  // This handles ANY mismatch — whether the backend returns values at a different scale,
-  // different currency, or the chart shows a different timeframe's last price.
-  forecastData.forEach((f: any, idx: number) => {
-    // On intraday views, limit forecast points
-    if ((range === '1d' || range === '5d') && idx >= 5) return;
+  // Max forecast horizon steps based on timeframe
+  const maxStepsMap: Record<string, number> = {
+    '1d': 0,    // on 1D intraday, don't mix days with minutes
+    '5d': 3,    // on 1W, show next 3 days
+    '1mo': 7,   // on 1M, show next 7 days
+    '3mo': 12,  // on 3M, show next 12 days
+    '1y': 15,   // on 1Y, show full 15 days
+    '5y': 15,
+  };
+  const maxSteps = maxStepsMap[range] ?? 7;
+  if (maxSteps === 0) return points;
 
-    // Calculate the percentage change from the forecast's own starting point
+  forecastData.slice(0, maxSteps).forEach((f: any, idx: number) => {
+    // Relative % return trajectory applied directly to chart anchor price
     const pctChange = (f.predicted - rawFirst) / rawFirst;
-    // Apply that percentage change to our actual chart anchor price
-    const calibrated = anchorPrice * (1 + pctChange);
+    const calibrated = +(anchorPrice * (1 + pctChange)).toFixed(2);
 
-    // Confidence band: use original band width ratio, or synthesize from step
-    let bandLow: number, bandHigh: number;
-    if (f.lower != null && f.upper != null && f.lower > 0 && f.upper > 0) {
-      // Preserve the original band width as a proportion of predicted
-      const lowerRatio = (f.predicted - f.lower) / f.predicted;
-      const upperRatio = (f.upper - f.predicted) / f.predicted;
-      bandLow = +(calibrated * (1 - lowerRatio)).toFixed(2);
-      bandHigh = +(calibrated * (1 + upperRatio)).toFixed(2);
-    } else {
-      const spread = calibrated * 0.012 * Math.sqrt(idx + 1);
-      bandLow = +(calibrated - spread).toFixed(2);
-      bandHigh = +(calibrated + spread).toFixed(2);
-    }
+    const spread = calibrated * 0.012 * Math.sqrt(idx + 1);
+    const bandLow = +(calibrated - spread).toFixed(2);
+    const bandHigh = +(calibrated + spread).toFixed(2);
 
     points.push({
       date: formatForecastDate(f.date, range),
       close: null,
-      predicted: +calibrated.toFixed(2),
+      predicted: calibrated,
       upper: bandHigh,
       lower: bandLow,
       volume: 0,
