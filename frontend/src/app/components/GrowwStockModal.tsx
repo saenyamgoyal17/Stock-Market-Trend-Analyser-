@@ -317,9 +317,16 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                     </div>
 
                     <div className="text-right font-mono">
-                      <div className="text-xs text-[#7C7E8C]">15-Day XGBoost Target</div>
+                      <div className="text-xs text-[#7C7E8C]">15-Day Target</div>
                       <div className="text-xl font-bold text-[#44475B]">
-                        {cs}{f2(mlPredictions?.xgboost?.forecast?.[14]?.predicted || price * 1.048)}
+                        {(() => {
+                          const fc = mlPredictions?.xgboost?.forecast;
+                          if (fc && fc.length > 1 && fc[0].predicted > 0) {
+                            const pctMove = (fc[fc.length - 1].predicted - fc[0].predicted) / fc[0].predicted;
+                            return `${cs}${f2(price * (1 + pctMove))}`;
+                          }
+                          return `${cs}${f2(price * 1.03)}`;
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -360,18 +367,37 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                   </h4>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     {[
-                      { name: '⭐ XGBoost', val: mlPredictions?.xgboost?.forecast?.[14]?.predicted, color: '#00D09C' },
-                      { name: 'ARIMA (5,1,0)', val: mlPredictions?.arima?.forecast?.[14]?.predicted, color: '#5367FF' },
-                      { name: 'Prophet', val: mlPredictions?.prophet?.forecast?.[14]?.predicted, color: '#F59E0B' },
-                      { name: 'LSTM Neural Net', val: mlPredictions?.lstm?.forecast?.[14]?.predicted, color: '#A855F7' },
-                    ].map((m, i) => (
-                      <div key={i} className="p-3.5 rounded-xl border border-[#EAECEF] bg-[#F9FAFB]">
-                        <span className="text-[11px] font-bold block" style={{ color: m.color }}>{m.name}</span>
-                        <span className="text-base font-extrabold text-[#44475B] font-mono mt-1 block">
-                          {cs}{f2(m.val || price * 1.03)}
-                        </span>
-                      </div>
-                    ))}
+                      { name: '⭐ XGBoost', key: 'xgboost' as const, color: '#00D09C' },
+                      { name: 'ARIMA', key: 'arima' as const, color: '#5367FF' },
+                      { name: 'Prophet', key: 'prophet' as const, color: '#F59E0B' },
+                      { name: 'LSTM', key: 'lstm' as const, color: '#A855F7' },
+                    ].map((m, i) => {
+                      // Calibrate: compute the % change from the model's own first forecast
+                      // and apply it to the current displayed price
+                      const forecast = mlPredictions?.[m.key]?.forecast;
+                      let targetPrice = price * 1.03; // fallback
+                      if (forecast && forecast.length > 0) {
+                        const firstPred = forecast[0].predicted;
+                        const lastPred = forecast[forecast.length - 1]?.predicted || firstPred;
+                        if (firstPred > 0) {
+                          const pctMove = (lastPred - firstPred) / firstPred;
+                          targetPrice = price * (1 + pctMove);
+                        }
+                      }
+                      const targetPct = ((targetPrice - price) / price) * 100;
+
+                      return (
+                        <div key={i} className="p-3.5 rounded-xl border border-[#EAECEF] bg-[#F9FAFB]">
+                          <span className="text-[11px] font-bold block" style={{ color: m.color }}>{m.name}</span>
+                          <span className="text-base font-extrabold text-[#44475B] font-mono mt-1 block">
+                            {cs}{f2(targetPrice)}
+                          </span>
+                          <span className="text-[10px] font-mono" style={{ color: targetPct >= 0 ? '#00D09C' : '#EB5B3C' }}>
+                            {targetPct >= 0 ? '+' : ''}{targetPct.toFixed(2)}%
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
