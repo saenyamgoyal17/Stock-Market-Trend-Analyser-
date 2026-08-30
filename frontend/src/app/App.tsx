@@ -318,12 +318,36 @@ export default function App() {
       </header>
 
       {/* ═══ 2. INFINITE GLIDING INDICES TICKER (Groww Style) ═════ */}
-      <div className="w-full overflow-hidden border-b bg-[#F9FAFB]" style={{ borderColor: BORDER }}>
+      <div className="w-full overflow-hidden border-b bg-[#F9FAFB] marquee-container select-none cursor-pointer" style={{ borderColor: BORDER }}>
         <div className="animate-marquee py-2.5 flex items-center gap-8 text-xs font-semibold whitespace-nowrap">
           {[...indices, ...indices].map((idx, i) => {
             const pos = idx.changePct >= 0;
             return (
-              <div key={i} className="flex items-center gap-2 px-3 py-1 rounded-md bg-white border border-[#EAECEF] shadow-2xs">
+              <div
+                key={i}
+                onClick={() => {
+                  const symbolMap: Record<string, string> = {
+                    'NIFTY 50': '^NSEI',
+                    'SENSEX': '^BSESN',
+                    'BANK NIFTY': '^NSEBANK',
+                    'S&P 500': '^GSPC',
+                    'NASDAQ': '^IXIC',
+                    'FTSE 100': '^FTSE',
+                  };
+                  const sym = symbolMap[idx.name] || idx.name;
+                  handleSelectStock({
+                    symbol: sym,
+                    name: idx.name,
+                    exchange: idx.name.includes('NIFTY') || idx.name.includes('SENSEX') ? 'NSE' : 'GLOBAL',
+                    country: idx.currency === '₹' ? 'IN' : 'US',
+                    currency: idx.currency === '₹' ? 'INR' : 'USD',
+                    price: idx.value,
+                    pct: idx.changePct,
+                  });
+                }}
+                className="flex items-center gap-2 px-3 py-1 rounded-md bg-white border border-[#EAECEF] shadow-2xs hover:border-[#00D09C] hover:shadow-md transition-all hover:scale-105 cursor-pointer active:scale-95"
+                title={`Click to view live chart for ${idx.name}`}
+              >
                 <span className="text-[#7C7E8C]">{idx.name}</span>
                 <span className="font-bold text-[#44475B]">{idx.currency}{f2(idx.value)}</span>
                 <span className="font-bold flex items-center" style={{ color: pos ? GREEN : RED }}>

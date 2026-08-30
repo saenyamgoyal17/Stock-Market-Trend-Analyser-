@@ -274,7 +274,7 @@ export async function fetchYFQuotes(symbols: string[]): Promise<StockData[]> {
     .map(r => r.value!);
 }
 
-/** Fetch real chart data from Yahoo Finance with FastAPI backend fallback */
+/** Fetch real chart data from Yahoo Finance */
 export async function fetchYFChart(symbol: string, range: string = '1d'): Promise<ChartPoint[]> {
   const intervalMap: Record<string, string> = {
     '1d': '2m', '5d': '15m', '1mo': '1d', '3mo': '1d',
@@ -282,57 +282,29 @@ export async function fetchYFChart(symbol: string, range: string = '1d'): Promis
   };
   const interval = intervalMap[range] || '5m';
 
-  // 1. Try Yahoo Finance proxy first
   try {
     const res = await fetch(`${YF}/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=false`);
-    if (res.ok) {
-      const data = await res.json();
-      const r = data.chart?.result?.[0];
-      if (r && r.timestamp && r.timestamp.length > 0) {
-        const ts = r.timestamp as number[];
-        const q = r.indicators?.quote?.[0] || {};
-        const pts = ts.map((t: number, i: number) => ({
-          time: t * 1000,
-          date: formatChartDate(t * 1000, range),
-          open: q.open?.[i] ?? 0,
-          high: q.high?.[i] ?? 0,
-          low: q.low?.[i] ?? 0,
-          close: q.close?.[i] ?? 0,
-          volume: q.volume?.[i] ?? 0,
-        })).filter((p: ChartPoint) => p.close > 0 && p.close !== null);
-        if (pts.length > 0) return pts;
-      }
-    }
-  } catch (err) {
-    console.warn(`YF chart proxy failed for ${symbol}:`, err);
-  }
+    if (!res.ok) throw new Error(`Chart ${res.status}`);
+    const data = await res.json();
+    const r = data.chart?.result?.[0];
+    if (!r || !r.timestamp) return [];
 
-  // 2. Reliable fallback to our Python FastAPI backend
-  try {
-    const period = range === '1d' ? '5d' : range === '5d' ? '1mo' : range;
-    const res = await fetch(`${ML_API_BASE}/stock/${encodeURIComponent(symbol)}?period=${period}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.prices && data.prices.length > 0) {
-        return data.prices.map((p: any) => {
-          const t = new Date(p.date).getTime();
-          return {
-            time: t,
-            date: formatChartDate(t, range),
-            open: p.open,
-            high: p.high,
-            low: p.low,
-            close: p.close,
-            volume: p.volume || 0,
-          };
-        });
-      }
-    }
-  } catch (err) {
-    console.warn(`FastAPI backend stock chart failed for ${symbol}:`, err);
-  }
+    const ts = r.timestamp as number[];
+    const q = r.indicators?.quote?.[0] || {};
 
-  return [];
+    return ts.map((t: number, i: number) => ({
+      time: t * 1000,
+      date: formatChartDate(t * 1000, range),
+      open: q.open?.[i] ?? 0,
+      high: q.high?.[i] ?? 0,
+      low: q.low?.[i] ?? 0,
+      close: q.close?.[i] ?? 0,
+      volume: q.volume?.[i] ?? 0,
+    })).filter((p: ChartPoint) => p.close > 0 && p.close !== null);
+  } catch (err) {
+    console.warn(`YF chart failed for ${symbol}:`, err);
+    return [];
+  }
 }
 
 function formatChartDate(ms: number, range: string): string {

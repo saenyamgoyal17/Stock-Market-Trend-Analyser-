@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import {
   X, ArrowUpRight, ArrowDownRight, Bookmark,
-  TrendingUp, TrendingDown, AlertCircle,
+  CheckCircle2, Sparkles, Globe, Activity, TrendingUp, TrendingDown,
+  AlertCircle, Zap, Shield, HelpCircle
 } from 'lucide-react';
-import { StockData, WorldEventItem, DetectedFactorEvent } from '../../services/api.js';
+import {
+  StockData, WorldEventItem, fetchYFQuote, fetchMLPredictions,
+  MLForecastResults, fetchDetectedFactors, DetectedFactorEvent
+} from '../../services/api.js';
 import { StockChart } from './StockChart.js';
+import { calculateStockPrediction } from '../../services/prediction.service.js';
 
 interface GrowwStockModalProps {
   stock: StockData;
@@ -39,8 +44,6 @@ const IMPACT_TEXT: Record<string, string> = {
   low: '#5367FF',
 };
 
-const API_BASE = '/api';
-
 export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initialStock, events, onClose }) => {
   const [stock, setStock] = useState<StockData>(initialStock);
   const [activeTab, setActiveTab] = useState<'overview' | 'prediction' | 'events'>('overview');
@@ -50,35 +53,54 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [orderPlaced, setOrderPlaced] = useState(false);
 
-  const [fullData, setFullData] = useState<any>(null);
+  const [mlPredictions, setMlPredictions] = useState<MLForecastResults | null>(null);
+  const [detectedFactors, setDetectedFactors] = useState<DetectedFactorEvent[]>([]);
 
-  // Fetch full analysis from FastAPI backend
+  // Hydrate live quote + ML models + detected factors
   useEffect(() => {
     let cancelled = false;
 
-    fetch(`${API_BASE}/full/${encodeURIComponent(initialStock.symbol)}?period=1y&horizon=15`)
-      .then(res => res.json())
-      .then(data => {
-        if (cancelled) return;
-        setFullData(data);
-        if (data.stock) {
-          setStock(prev => ({
-            ...prev,
-            name: data.stock.name || prev.name,
-            currency: data.stock.currency || prev.currency,
-            exchange: data.stock.exchange || prev.exchange,
-            price: data.stock.current_price || prev.price,
-            pct: data.stock.change_pct ?? prev.pct,
-            change: data.stock.change ?? prev.change,
-            sector: data.stock.sector || prev.sector,
-          }));
-        }
-      })
-      .catch(err => {
-        console.warn(`Could not load full analysis for ${initialStock.symbol}:`, err);
-      });
+    const loadData = async () => {
+      const currentVal = initialStock.price || initialStock.lastPrice || 150;
+      const [liveQuote, mlRes, factorsRes] = await Promise.allSettled([
+        fetchYFQuote(initialStock.symbol),
+        fetchMLPredictions(initialStock.symbol, '1y', 15, currentVal),
+        fetchDetectedFactors(initialStock.symbol, '1y'),
+      ]);
 
-    return () => { cancelled = true; };
+      if (cancelled) return;
+
+      if (liveQuote.status === 'fulfilled' && liveQuote.value && liveQuote.value.price > 0) {
+        setStock(prev => ({
+          ...prev,
+          ...liveQuote.value,
+          name: liveQuote.value.name || prev.name,
+          currency: liveQuote.value.currency || prev.currency,
+          exchange: liveQuote.value.exchange || prev.exchange,
+        }));
+      }
+
+      if (mlRes.status === 'fulfilled') {
+        setMlPredictions(mlRes.value);
+      }
+
+      if (factorsRes.status === 'fulfilled') {
+        setDetectedFactors(factorsRes.value);
+      }
+    };
+
+    loadData();
+    const interval = setInterval(async () => {
+      const live = await fetchYFQuote(initialStock.symbol);
+      if (!cancelled && live && live.price > 0) {
+        setStock(prev => ({ ...prev, ...live }));
+      }
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [initialStock.symbol]);
 
   const price = stock.price || stock.lastPrice || 150;
@@ -86,8 +108,14 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
   const isPos = changePct >= 0;
   const cs = getCurr(stock.currency, stock.symbol);
 
-  const predictions = fullData?.predictions;
-  const detectedFactors: DetectedFactorEvent[] = fullData?.factors || [];
+  const prediction = calculateStockPrediction({
+    symbol: stock.symbol,
+    name: stock.name,
+    price,
+    pct: changePct,
+    currency: cs,
+    sector: stock.sector,
+  });
 
   const relatedEvents = events.filter(e =>
     e.stocks?.some(s => s.sym?.toLowerCase() === stock.symbol?.toLowerCase())
@@ -135,7 +163,7 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                   {stock.exchange || 'NSE'}
                 </span>
                 <span className="text-[10px] px-2 py-0.5 rounded font-bold uppercase bg-[#EBFCF7] text-[#00D09C]">
-                  XGBOOST 3.4.1 ML
+                  REAL-TIME ML
                 </span>
               </div>
               <p className="text-[13px] text-[#7C7E8C]">{stock.symbol} · {stock.currency || 'INR'}</p>
@@ -200,7 +228,7 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                   symbol={stock.symbol}
                   currentPrice={price}
                   changePct={changePct}
-                  height={300}
+                  height={290}
                   currencySymbol={cs}
                   showMLOverlay={true}
                 />
@@ -265,77 +293,66 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
             {/* TAB 2: ML PREDICTIONS (XGBOOST, PROPHET, ARIMA, LSTM) */}
             {activeTab === 'prediction' && (
               <div className="space-y-6 animate-fade-in">
-                {/* Embedded Forecasting Chart */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-[15px] font-bold text-[#44475B]">AI Multi-Model Price Trajectory</h4>
-                    <span className="text-xs text-[#00D09C] font-mono font-semibold">Trained on 1Y OHLCV</span>
-                  </div>
-                  <StockChart
-                    symbol={stock.symbol}
-                    currentPrice={price}
-                    changePct={changePct}
-                    height={300}
-                    currencySymbol={cs}
-                    showMLOverlay={true}
-                  />
-                </div>
-
-                {/* Direction Signal Card */}
-                {predictions?.direction && (
-                  <div
-                    className="p-5 rounded-2xl border"
-                    style={{
-                      borderColor: predictions.direction.direction === 'up' ? '#00D09C' : '#EB5B3C',
-                      background: predictions.direction.direction === 'up' ? '#F0FDF9' : '#FEF2F2',
-                    }}
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-4 mb-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-2xl font-extrabold" style={{ color: predictions.direction.direction === 'up' ? '#00D09C' : '#EB5B3C' }}>
-                            {predictions.direction.direction === 'up' ? '▲ WILL GO UP' : '▼ WILL GO DOWN'}
-                          </span>
-                          <span className="text-xs px-2.5 py-1 rounded-full font-bold uppercase" style={{ background: predictions.direction.direction === 'up' ? '#DCFCE7' : '#FEE2E2', color: predictions.direction.direction === 'up' ? '#16A34A' : '#DC2626' }}>
-                            {((predictions.direction.confidence || 0.88) * 100).toFixed(0)}% WIN PROBABILITY
-                          </span>
-                        </div>
-                        <div className="text-xs text-[#7C7E8C] mt-1 font-mono">
-                          Model: <b>{predictions.direction.model || 'Gradient Boosted Technical Classifier'}</b>
-                        </div>
+                {/* Direction Card */}
+                <div
+                  className="p-5 rounded-2xl border"
+                  style={{
+                    borderColor: mlPredictions?.direction?.direction === 'up' ? '#00D09C' : '#EB5B3C',
+                    background: mlPredictions?.direction?.direction === 'up' ? '#F0FDF9' : '#FEF2F2',
+                  }}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-4 mb-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-2xl font-extrabold" style={{ color: mlPredictions?.direction?.direction === 'up' ? '#00D09C' : '#EB5B3C' }}>
+                          {mlPredictions?.direction?.direction === 'up' ? '▲ WILL GO UP' : '▼ WILL GO DOWN'}
+                        </span>
+                        <span className="text-xs px-2.5 py-1 rounded-full font-bold uppercase" style={{ background: mlPredictions?.direction?.direction === 'up' ? '#DCFCE7' : '#FEE2E2', color: mlPredictions?.direction?.direction === 'up' ? '#16A34A' : '#DC2626' }}>
+                          {((mlPredictions?.direction?.confidence || 0.88) * 100).toFixed(0)}% WIN PROBABILITY
+                        </span>
                       </div>
-
-                      <div className="text-right font-mono">
-                        <div className="text-xs text-[#7C7E8C]">15-Day XGBoost Target</div>
-                        <div className="text-xl font-bold text-[#44475B]">
-                          {cs}{f2(predictions.xgboost?.forecast?.[14]?.predicted || price * 1.04)}
-                        </div>
+                      <div className="text-xs text-[#7C7E8C] mt-1 font-mono">
+                        Model: <b>{mlPredictions?.direction?.model || 'XGBoost Technical Classifier'}</b>
                       </div>
                     </div>
 
-                    {predictions.direction.backtest_accuracy != null && (
-                      <div className="text-xs font-semibold text-[#44475B] pt-2 border-t border-black/5">
-                        Backtest Validation Accuracy: <b>{(predictions.direction.backtest_accuracy * 100).toFixed(1)}%</b> on held-out test data.
+                    <div className="text-right font-mono">
+                      <div className="text-xs text-[#7C7E8C]">15-Day Target</div>
+                      <div className="text-xl font-bold text-[#44475B]">
+                        {(() => {
+                          const fc = mlPredictions?.xgboost?.forecast;
+                          if (fc && fc.length > 1 && fc[0].predicted > 0) {
+                            const pctMove = (fc[fc.length - 1].predicted - fc[0].predicted) / fc[0].predicted;
+                            return `${cs}${f2(price * (1 + pctMove))}`;
+                          }
+                          return `${cs}${f2(price * 1.03)}`;
+                        })()}
                       </div>
-                    )}
+                    </div>
                   </div>
-                )}
+
+                  {mlPredictions?.direction?.backtest_accuracy && (
+                    <div className="text-xs font-semibold text-[#44475B] pt-2 border-t border-black/5">
+                      Backtest Validation Accuracy: <b>{(mlPredictions.direction.backtest_accuracy * 100).toFixed(1)}%</b> on held-out test data.
+                    </div>
+                  )}
+                </div>
 
                 {/* Feature Importance */}
-                {predictions?.direction?.feature_importance && (
+                {mlPredictions?.direction?.feature_importance && (
                   <div className="p-5 rounded-2xl border border-[#EAECEF] bg-white space-y-3">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-[#00D09C] font-mono">
                       XGBoost Feature Importance Weights
                     </h4>
                     <div className="space-y-2">
-                      {Object.entries(predictions.direction.feature_importance).map(([feature, weight]: any) => (
+                      {Object.entries(mlPredictions.direction.feature_importance).map(([feature, weight]) => (
                         <div key={feature} className="space-y-1">
                           <div className="flex justify-between text-xs font-mono">
                             <span className="text-[#44475B] font-semibold">{feature.toUpperCase()}</span>
                             <span className="text-[#00D09C] font-bold">{(weight * 100).toFixed(1)}%</span>
                           </div>
                           <div className="w-full h-1.5 rounded-full bg-[#F0F0F2] overflow-hidden">
-                            <div className="h-full bg-[#00D09C] rounded-full" style={{ width: `${Math.min(100, weight * 100 * 2.5)}%` }} />
+                            <div className="h-full bg-[#00D09C] rounded-full" style={{ width: `${weight * 100 * 2.5}%` }} />
                           </div>
                         </div>
                       ))}
@@ -355,9 +372,18 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                       { name: 'Prophet', key: 'prophet' as const, color: '#F59E0B' },
                       { name: 'LSTM', key: 'lstm' as const, color: '#A855F7' },
                     ].map((m, i) => {
-                      const forecast = predictions?.[m.key]?.forecast;
-                      const lastPred = forecast && forecast.length > 0 ? forecast[forecast.length - 1]?.predicted : null;
-                      const targetPrice = lastPred || price * 1.03;
+                      // Calibrate: compute the % change from the model's own first forecast
+                      // and apply it to the current displayed price
+                      const forecast = mlPredictions?.[m.key]?.forecast;
+                      let targetPrice = price * 1.03; // fallback
+                      if (forecast && forecast.length > 0) {
+                        const firstPred = forecast[0].predicted;
+                        const lastPred = forecast[forecast.length - 1]?.predicted || firstPred;
+                        if (firstPred > 0) {
+                          const pctMove = (lastPred - firstPred) / firstPred;
+                          targetPrice = price * (1 + pctMove);
+                        }
+                      }
                       const targetPct = ((targetPrice - price) / price) * 100;
 
                       return (
@@ -387,27 +413,21 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                   <span className="text-xs text-[#7C7E8C]">Volume anomalies, Index divergence & News</span>
                 </div>
 
-                {detectedFactors.length === 0 ? (
-                  <div className="p-6 rounded-2xl border border-[#EAECEF] bg-[#F9FAFB] text-center text-xs text-[#7C7E8C]">
-                    No significant external factor anomalies detected in the selected period.
-                  </div>
-                ) : (
-                  detectedFactors.map((factor, i) => (
-                    <div key={i} className="p-4 rounded-xl border border-[#EAECEF] bg-white space-y-2 hover:shadow-sm transition-shadow">
-                      <div className="flex items-center justify-between">
-                        <span
-                          className="text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase"
-                          style={{ background: IMPACT_BG[factor.impact] || '#F4F4F7', color: IMPACT_TEXT[factor.impact] || '#44475B' }}
-                        >
-                          {factor.type.replace('_', ' ')} · {factor.impact} impact
-                        </span>
-                        <span className="text-xs text-[#9B9EA7] font-mono">{factor.date}</span>
-                      </div>
-                      <h4 className="text-sm font-bold text-[#44475B]">{factor.title}</h4>
-                      <p className="text-xs text-[#7C7E8C] leading-relaxed">{factor.description}</p>
+                {detectedFactors.map((factor, i) => (
+                  <div key={i} className="p-4 rounded-xl border border-[#EAECEF] bg-white space-y-2 hover:shadow-sm transition-shadow">
+                    <div className="flex items-center justify-between">
+                      <span
+                        className="text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase"
+                        style={{ background: IMPACT_BG[factor.impact] || '#F4F4F7', color: IMPACT_TEXT[factor.impact] || '#44475B' }}
+                      >
+                        {factor.type.replace('_', ' ')} · {factor.impact} impact
+                      </span>
+                      <span className="text-xs text-[#9B9EA7] font-mono">{factor.date}</span>
                     </div>
-                  ))
-                )}
+                    <h4 className="text-sm font-bold text-[#44475B]">{factor.title}</h4>
+                    <p className="text-xs text-[#7C7E8C] leading-relaxed">{factor.description}</p>
+                  </div>
+                ))}
               </div>
             )}
 
@@ -440,89 +460,77 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                 </button>
               </div>
 
-              {/* Delivery / Intraday */}
-              <div className="flex gap-2">
-                {(['delivery', 'intraday'] as const).map(t => (
-                  <button
-                    key={t}
-                    onClick={() => setProductType(t)}
-                    className="flex-1 py-2 text-xs font-bold rounded-lg border transition-all uppercase"
-                    style={{
-                      borderColor: productType === t ? '#44475B' : '#EAECEF',
-                      background: productType === t ? '#44475B' : '#fff',
-                      color: productType === t ? '#fff' : '#7C7E8C',
-                    }}
-                  >
-                    {t}
-                  </button>
-                ))}
+              {/* Product type */}
+              <div className="flex items-center gap-6 text-sm font-semibold text-[#44475B]">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio" name="product" checked={productType === 'delivery'}
+                    onChange={() => setProductType('delivery')}
+                    style={{ accentColor: '#00D09C' }}
+                  />
+                  Delivery (CNC)
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio" name="product" checked={productType === 'intraday'}
+                    onChange={() => setProductType('intraday')}
+                    style={{ accentColor: '#00D09C' }}
+                  />
+                  Intraday (MIS)
+                </label>
               </div>
 
               {/* Quantity */}
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-[#7C7E8C]">Shares Quantity</label>
-                <div className="flex items-center rounded-xl border border-[#EAECEF] bg-white overflow-hidden">
-                  <button
-                    onClick={() => setShares(Math.max(1, shares - 1))}
-                    className="px-4 py-2.5 text-lg font-bold text-[#44475B] hover:bg-[#F4F4F7]"
-                  >
-                    -
-                  </button>
-                  <input
-                    type="number"
-                    min="1"
-                    value={shares}
-                    onChange={e => setShares(Math.max(1, parseInt(e.target.value) || 1))}
-                    className="flex-1 text-center font-bold text-sm outline-none text-[#44475B]"
-                  />
-                  <button
-                    onClick={() => setShares(shares + 1)}
-                    className="px-4 py-2.5 text-lg font-bold text-[#44475B] hover:bg-[#F4F4F7]"
-                  >
-                    +
-                  </button>
+                <div className="flex justify-between text-xs font-mono text-[#7C7E8C]">
+                  <span>Quantity (Shares)</span>
+                  <span>{stock.exchange || 'NSE'}</span>
                 </div>
+                <input
+                  type="number" min="1" value={shares}
+                  onChange={e => setShares(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#EAECEF] text-lg font-bold text-[#44475B] outline-none focus:border-[#00D09C] bg-white font-mono"
+                />
               </div>
 
-              {/* Limit Price */}
+              {/* Price */}
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-[#7C7E8C]">Order Price (At Market)</label>
-                <div className="px-4 py-2.5 rounded-xl border border-[#EAECEF] bg-[#F4F4F7] font-bold text-sm text-[#44475B] font-mono">
+                <div className="flex justify-between text-xs font-mono text-[#7C7E8C]">
+                  <span>Price (Market)</span>
+                  <span className="px-1.5 py-0.5 rounded bg-[#EBFCF7] text-[10px] font-bold text-[#00D09C]">LIVE LTP</span>
+                </div>
+                <div className="px-3.5 py-2.5 rounded-xl border border-[#EAECEF] text-lg font-bold text-[#44475B] bg-white font-mono">
                   {cs}{f2(price)}
                 </div>
               </div>
 
-              {/* Balance & Margin */}
-              <div className="pt-3 border-t border-[#EAECEF] space-y-2 text-xs font-mono">
+              {/* Summary */}
+              <div className="p-4 rounded-xl bg-white border border-[#EAECEF] text-xs font-mono space-y-2">
                 <div className="flex justify-between text-[#7C7E8C]">
-                  <span>Approx. Margin</span>
+                  <span>Required Margin:</span>
                   <span className="font-bold text-[#44475B]">{cs}{f2(totalAmt)}</span>
                 </div>
                 <div className="flex justify-between text-[#7C7E8C]">
-                  <span>Available Balance</span>
+                  <span>Available Balance:</span>
                   <span className="font-bold text-[#00D09C]">{cs}1,00,000.00</span>
                 </div>
               </div>
-            </div>
 
-            {/* Submit button */}
-            <div className="pt-4">
-              {orderPlaced ? (
-                <div className="py-3.5 rounded-xl bg-[#EBFCF7] text-[#00D09C] text-center font-bold text-sm flex items-center justify-center gap-2">
-                  Order Executed Successfully!
+              {orderPlaced && (
+                <div className="p-3.5 rounded-xl bg-[#F0FDF9] border border-[#00D09C]/40 text-[#00D09C] text-xs font-bold flex items-center gap-2 animate-fade-in">
+                  <CheckCircle2 size={16} /> Simulated Order Executed Successfully!
                 </div>
-              ) : (
-                <button
-                  onClick={handleOrder}
-                  className="w-full py-3.5 rounded-xl text-white font-bold text-sm shadow-md transition-transform active:scale-[0.99]"
-                  style={{ background: orderType === 'buy' ? '#00D09C' : '#EB5B3C' }}
-                >
-                  {orderType.toUpperCase()} {shares} SHARES
-                </button>
               )}
             </div>
-          </div>
 
+            <button
+              onClick={handleOrder}
+              className="w-full py-4 rounded-xl font-bold text-sm text-white mt-6 transition-all hover:opacity-95 shadow-md uppercase font-mono"
+              style={{ background: orderType === 'buy' ? '#00D09C' : '#EB5B3C' }}
+            >
+              {orderType === 'buy' ? `BUY ${shares} SHARES · ${cs}${f2(totalAmt)}` : `SELL ${shares} SHARES`}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -2,43 +2,43 @@
 
 :root {
   --font-size: 16px;
-  --background: #07080F;
-  --foreground: #EDF1F7;
-  --card: #0D0F1A;
-  --card-foreground: #EDF1F7;
-  --popover: #0D0F1A;
-  --popover-foreground: #EDF1F7;
-  --primary: #00CE9C;
-  --primary-foreground: #07080F;
-  --secondary: #111720;
-  --secondary-foreground: #8899AA;
-  --muted: #111720;
-  --muted-foreground: #8899AA;
-  --accent: #4F8EF7;
+  --background: #FFFFFF;
+  --foreground: #44475B;
+  --card: #FFFFFF;
+  --card-foreground: #44475B;
+  --popover: #FFFFFF;
+  --popover-foreground: #44475B;
+  --primary: #00D09C;
+  --primary-foreground: #FFFFFF;
+  --secondary: #F4F4F7;
+  --secondary-foreground: #7C7E8C;
+  --muted: #F9FAFB;
+  --muted-foreground: #9B9EA7;
+  --accent: #5367FF;
   --accent-foreground: #ffffff;
-  --destructive: #F43F5E;
+  --destructive: #EB5B3C;
   --destructive-foreground: #ffffff;
-  --border: rgba(255, 255, 255, 0.07);
-  --input: rgba(255, 255, 255, 0.05);
-  --input-background: rgba(255, 255, 255, 0.05);
-  --switch-background: #1E2A38;
+  --border: #EAECEF;
+  --input: #F4F4F7;
+  --input-background: #F4F4F7;
+  --switch-background: #EAECEF;
   --font-weight-medium: 500;
   --font-weight-normal: 400;
-  --ring: rgba(16, 212, 165, 0.4);
-  --chart-1: #10D4A5;
-  --chart-2: #4F8EF7;
-  --chart-3: #F43F5E;
+  --ring: rgba(0, 208, 156, 0.35);
+  --chart-1: #00D09C;
+  --chart-2: #5367FF;
+  --chart-3: #EB5B3C;
   --chart-4: #F59E0B;
   --chart-5: #8B5CF6;
-  --radius: 0.5rem;
-  --sidebar: #0C1018;
-  --sidebar-foreground: #E2EAF4;
-  --sidebar-primary: #10D4A5;
-  --sidebar-primary-foreground: #06080E;
-  --sidebar-accent: #111720;
-  --sidebar-accent-foreground: #E2EAF4;
-  --sidebar-border: rgba(255, 255, 255, 0.07);
-  --sidebar-ring: rgba(16, 212, 165, 0.4);
+  --radius: 0.75rem;
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #44475B;
+  --sidebar-primary: #00D09C;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #F4F4F7;
+  --sidebar-accent-foreground: #44475B;
+  --sidebar-border: #EAECEF;
+  --sidebar-ring: rgba(0, 208, 156, 0.35);
 }
 
 .dark {
@@ -48,7 +48,7 @@
   --card-foreground: #EDF1F7;
   --popover: #0D0F1A;
   --popover-foreground: #EDF1F7;
-  --primary: #00CE9C;
+  --primary: #00D09C;
   --primary-foreground: #07080F;
   --secondary: #111720;
   --secondary-foreground: #8899AA;
@@ -128,10 +128,28 @@
     @apply bg-background text-foreground;
   }
 
-  /**
-  * Default typography styles for HTML elements (h1-h4, p, label, button, input).
-  * These are in @layer base, so Tailwind utility classes (like text-sm, text-lg) automatically override them.
-  */
+  /* ═══ Universal Interactive Hand Cursors & Tactile Button Feedback ═══ */
+  button,
+  [role="button"],
+  a,
+  input[type="button"],
+  input[type="submit"],
+  input[type="reset"],
+  select,
+  summary,
+  .cursor-pointer,
+  [onclick] {
+    cursor: pointer !important;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Real native button press feedback */
+  button:active,
+  [role="button"]:active {
+    transform: scale(0.97);
+    transition: transform 0.08s ease-out;
+  }
 
   html {
     font-size: var(--font-size);
@@ -178,4 +196,44 @@
     font-weight: var(--font-weight-normal);
     line-height: 1.5;
   }
+}
+
+/* ═══ Header Marquee Animation with Pause on Hover ═══ */
+@keyframes glideMarquee {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-marquee {
+  display: flex !important;
+  width: max-content !important;
+  animation: glideMarquee 38s linear infinite !important;
+  will-change: transform;
+}
+
+/* Pause marquee seamlessly when cursor hovers over the ticker */
+.animate-marquee:hover,
+.marquee-container:hover .animate-marquee {
+  animation-play-state: paused !important;
+  cursor: pointer;
+}
+
+/* Additional interactive button hover animations */
+.btn-tactile {
+  cursor: pointer !important;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-tactile:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.03);
+}
+
+.btn-tactile:active {
+  transform: translateY(1px) scale(0.97);
+  filter: brightness(0.97);
 }
