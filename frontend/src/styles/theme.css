@@ -198,7 +198,7 @@
   }
 }
 
-/* ═══ Header Marquee Animation with Pause on Hover ═══ */
+/* ═══ Header Marquee Animation (Continuous Non-Stop Gliding) ═══ */
 @keyframes glideMarquee {
   0% {
     transform: translateX(0%);
@@ -215,12 +215,6 @@
   will-change: transform;
 }
 
-/* Pause marquee seamlessly when cursor hovers over the ticker */
-.animate-marquee:hover,
-.marquee-container:hover .animate-marquee {
-  animation-play-state: paused !important;
-  cursor: pointer;
-}
 
 /* Additional interactive button hover animations */
 .btn-tactile {
