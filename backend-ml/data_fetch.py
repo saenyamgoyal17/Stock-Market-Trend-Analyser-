@@ -1,6 +1,6 @@
 """
 Handles fetching price data + basic info for any ticker (Indian or foreign),
-auto-detecting currency and exchange with smart NSE/BSE fallback.
+auto-detecting currency and exchange.
 """
 import yfinance as yf
 import pandas as pd
@@ -21,6 +21,8 @@ KNOWN_INDIAN = {
 
 
 def normalize_ticker(ticker: str) -> str:
+    """Allow users to type 'RELIANCE' or 'TCS' and default to NSE if no suffix given
+    and it looks like an Indian stock (heuristic: user can also just type AAPL etc.)"""
     t = ticker.strip().upper()
     if not (t.endswith(INDIAN_SUFFIXES) or "." in t or t.startswith("^")):
         if t in KNOWN_INDIAN:
@@ -50,12 +52,13 @@ def fetch_stock_data(ticker: str, period: str = "1y", interval: str = "1d") -> d
     target_ticker = normalize_ticker(ticker)
     t = yf.Ticker(target_ticker)
 
+    # fetch price history first — this is the critical path and shouldn't be
+    # blocked by .info (which is a separate, flakier network call)
     try:
         hist = t.history(period=period, interval=interval)
-    except Exception:
+    except Exception as e:
         hist = pd.DataFrame()
 
-    # Smart fallback for Indian tickers without suffix if first try returned empty
     if hist.empty and not target_ticker.endswith(INDIAN_SUFFIXES) and "." not in target_ticker:
         for suffix in [".NS", ".BO"]:
             try:
@@ -73,23 +76,28 @@ def fetch_stock_data(ticker: str, period: str = "1y", interval: str = "1d") -> d
     if hist.empty:
         raise ValueError(
             f"No data found for ticker '{ticker}'. Check the symbol "
-            f"(e.g. 'RELIANCE.NS', 'TCS.NS' for India, 'AAPL', 'NVDA' for US)."
+            f"(e.g. 'RELIANCE.NS', 'TCS.NS' for India, 'AAPL', 'MSFT' for US)."
         )
 
     hist = hist.reset_index()
     date_col = "Date" if "Date" in hist.columns else "Datetime"
-    hist["date"] = hist[date_col].dt.strftime("%Y-%m-%d")
+    hist["date"] = hist[date_col].dt.strftime("%Y-%m-%d %H:%M:%S")
 
     info = {}
     try:
-        f_info = t.fast_info
-        info = {
-            "currency": f_info.get("currency"),
-            "exchange": f_info.get("exchange"),
-            "marketCap": f_info.get("market_cap"),
-        }
+        info = t.info or {}
     except Exception:
-        info = {}
+        try:
+            f_info = t.fast_info
+            info = {
+                "currency": f_info.get("currency"),
+                "exchange": f_info.get("exchange"),
+                "marketCap": f_info.get("market_cap"),
+                "fiftyTwoWeekHigh": f_info.get("year_high"),
+                "fiftyTwoWeekLow": f_info.get("year_low"),
+            }
+        except Exception:
+            info = {}
 
     meta = get_currency_and_exchange(target_ticker, info)
 
@@ -114,6 +122,12 @@ def fetch_stock_data(ticker: str, period: str = "1y", interval: str = "1d") -> d
     change = latest["close"] - prev["close"]
     change_pct = (change / prev["close"] * 100) if prev["close"] else 0
 
+    def _round(v, n=2):
+        try:
+            return round(float(v), n) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
     return {
         "ticker": target_ticker,
         "name": info.get("longName", info.get("shortName", target_ticker)),
@@ -127,14 +141,28 @@ def fetch_stock_data(ticker: str, period: str = "1y", interval: str = "1d") -> d
         "change": round(change, 2),
         "change_pct": round(change_pct, 2),
         "market_cap": info.get("marketCap"),
+        # ── Fundamental metrics ────────────────────────────────────────────
+        "pe_ratio":             _round(info.get("trailingPE")),
+        "forward_pe":           _round(info.get("forwardPE")),
+        "eps":                  _round(info.get("trailingEps")),
+        "fifty_two_week_high":  _round(info.get("fiftyTwoWeekHigh")),
+        "fifty_two_week_low":   _round(info.get("fiftyTwoWeekLow")),
+        "beta":                 _round(info.get("beta")),
+        "analyst_target":       _round(info.get("targetMeanPrice")),
+        "recommendation":       info.get("recommendationKey"),
+        "dividend_yield":       _round(info.get("dividendYield"), 4),
+        "debt_to_equity":       _round(info.get("debtToEquity")),
+        "profit_margin":        _round(info.get("profitMargins"), 4),
+        # ──────────────────────────────────────────────────────────────────
         "prices": price_data,
     }
 
 
 def fetch_sector_peers(ticker: str, is_indian: bool) -> list:
+    """Return a small set of index/sector tickers to compare volume & correlation against."""
     if is_indian or ticker.endswith(INDIAN_SUFFIXES) or ticker in KNOWN_INDIAN:
-        return ["^NSEI", "^BSESN"]
-    return ["^GSPC", "^DJI", "^IXIC"]
+        return ["^NSEI", "^BSESN"]  # Nifty 50, Sensex
+    return ["^GSPC", "^DJI", "^IXIC"]  # S&P500, Dow, Nasdaq
 
 
 def fetch_index_series(index_ticker: str, period: str = "1y") -> pd.DataFrame:
