@@ -78,6 +78,12 @@ def fetch_stock_data(ticker: str, period: str = "1y", interval: str = "1d") -> d
     change = latest["close"] - prev["close"]
     change_pct = (change / prev["close"] * 100) if prev["close"] else 0
 
+    def _round(v, n=2):
+        try:
+            return round(float(v), n) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
     return {
         "ticker": ticker,
         "name": info.get("longName", info.get("shortName", ticker)),
@@ -91,6 +97,19 @@ def fetch_stock_data(ticker: str, period: str = "1y", interval: str = "1d") -> d
         "change": round(change, 2),
         "change_pct": round(change_pct, 2),
         "market_cap": info.get("marketCap"),
+        # ── Fundamental metrics ────────────────────────────────────────────
+        "pe_ratio":             _round(info.get("trailingPE")),
+        "forward_pe":           _round(info.get("forwardPE")),
+        "eps":                  _round(info.get("trailingEps")),
+        "fifty_two_week_high":  _round(info.get("fiftyTwoWeekHigh")),
+        "fifty_two_week_low":   _round(info.get("fiftyTwoWeekLow")),
+        "beta":                 _round(info.get("beta")),
+        "analyst_target":       _round(info.get("targetMeanPrice")),
+        "recommendation":       info.get("recommendationKey"),          # e.g. "buy", "hold"
+        "dividend_yield":       _round(info.get("dividendYield"), 4),   # e.g. 0.0058 → 0.58 %
+        "debt_to_equity":       _round(info.get("debtToEquity")),
+        "profit_margin":        _round(info.get("profitMargins"), 4),
+        # ──────────────────────────────────────────────────────────────────
         "prices": price_data,
     }
 
