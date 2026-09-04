@@ -381,11 +381,9 @@ export const StockChart: React.FC<StockChartProps> = ({
 /**
  * Merges historical chart points with forward ML forecast.
  *
- * KEY FIXES:
- * 1. Formats forecast dates to match chart date format so the x-axis is continuous
- * 2. Anchors forecast[0] to the last historical close price exactly
- * 3. Rescales all forecast values as relative % moves from anchor if there's any mismatch
- * 4. Sets `predicted` on the last historical point so the line connects seamlessly
+ * Displays the backend's raw predicted/lower/upper values directly — NO rescaling.
+ * The backend already returns correct absolute prices anchored to the actual last close.
+ * The only transformation is date formatting so the x-axis stays consistent.
  */
 function mergeChartAndML(
   baseChart: ChartPoint[],
@@ -412,43 +410,32 @@ function mergeChartAndML(
   const anchorPrice = lastPoint.close;
   if (!anchorPrice || anchorPrice <= 0) return points;
 
-  // The raw forecast's first predicted value from the backend
-  const rawFirst = forecastData[0].predicted;
-  if (!rawFirst || rawFirst <= 0) return points;
-
-  // Set predicted on the last historical point = anchorPrice (connection point)
+  // Set predicted on the last historical point = anchorPrice (seamless connection)
   lastPoint.predicted = anchorPrice;
 
-  // For each forecast step, compute the rescaled prediction anchored to the chart's last close.
-  // This handles ANY mismatch — whether the backend returns values at a different scale,
-  // different currency, or the chart shows a different timeframe's last price.
+  // Display the backend's raw forecast values directly — no rescaling
   forecastData.forEach((f: any, idx: number) => {
     // On intraday views, limit forecast points
     if ((range === '1d' || range === '5d') && idx >= 5) return;
 
-    // Calculate the percentage change from the forecast's own starting point
-    const pctChange = (f.predicted - rawFirst) / rawFirst;
-    // Apply that percentage change to our actual chart anchor price
-    const calibrated = anchorPrice * (1 + pctChange);
+    const predicted = f.predicted;
+    if (!predicted || predicted <= 0) return;
 
-    // Confidence band: use original band width ratio, or synthesize from step
+    // Use raw backend confidence bands, or synthesize if missing
     let bandLow: number, bandHigh: number;
     if (f.lower != null && f.upper != null && f.lower > 0 && f.upper > 0) {
-      // Preserve the original band width as a proportion of predicted
-      const lowerRatio = (f.predicted - f.lower) / f.predicted;
-      const upperRatio = (f.upper - f.predicted) / f.predicted;
-      bandLow = +(calibrated * (1 - lowerRatio)).toFixed(2);
-      bandHigh = +(calibrated * (1 + upperRatio)).toFixed(2);
+      bandLow = +f.lower.toFixed(2);
+      bandHigh = +f.upper.toFixed(2);
     } else {
-      const spread = calibrated * 0.012 * Math.sqrt(idx + 1);
-      bandLow = +(calibrated - spread).toFixed(2);
-      bandHigh = +(calibrated + spread).toFixed(2);
+      const spread = predicted * 0.012 * Math.sqrt(idx + 1);
+      bandLow = +(predicted - spread).toFixed(2);
+      bandHigh = +(predicted + spread).toFixed(2);
     }
 
     points.push({
       date: formatForecastDate(f.date, range),
       close: null,
-      predicted: +calibrated.toFixed(2),
+      predicted: +predicted.toFixed(2),
       upper: bandHigh,
       lower: bandLow,
       volume: 0,

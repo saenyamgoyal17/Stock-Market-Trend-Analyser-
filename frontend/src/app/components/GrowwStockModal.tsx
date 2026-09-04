@@ -321,9 +321,9 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                       <div className="text-xl font-bold text-[#44475B]">
                         {(() => {
                           const fc = mlPredictions?.xgboost?.forecast;
-                          if (fc && fc.length > 1 && fc[0].predicted > 0) {
-                            const pctMove = (fc[fc.length - 1].predicted - fc[0].predicted) / fc[0].predicted;
-                            return `${cs}${f2(price * (1 + pctMove))}`;
+                          if (fc && fc.length > 0) {
+                            const lastPred = fc[fc.length - 1].predicted;
+                            if (lastPred > 0) return `${cs}${f2(lastPred)}`;
                           }
                           return `${cs}${f2(price * 1.03)}`;
                         })()}
@@ -379,11 +379,9 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                       const forecast = mlPredictions?.[m.key]?.forecast;
                       let targetPrice = price * 1.03; // fallback
                       if (forecast && forecast.length > 0) {
-                        const firstPred = forecast[0].predicted;
-                        const lastPred = forecast[forecast.length - 1]?.predicted || firstPred;
-                        if (firstPred > 0) {
-                          const pctMove = (lastPred - firstPred) / firstPred;
-                          targetPrice = price * (1 + pctMove);
+                        const lastPred = forecast[forecast.length - 1]?.predicted;
+                        if (lastPred && lastPred > 0) {
+                          targetPrice = lastPred;
                         }
                       }
                       const targetPct = ((targetPrice - price) / price) * 100;
