@@ -90,6 +90,8 @@ export interface MLForecastResults {
   ticker?: string;
   currency_symbol?: string;
   xgboost?: MLModelForecast;
+  lightgbm?: MLModelForecast;
+  catboost?: MLModelForecast;
   arima?: MLModelForecast;
   prophet?: MLModelForecast;
   lstm?: MLModelForecast;

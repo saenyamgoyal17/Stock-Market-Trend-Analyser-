@@ -7,6 +7,9 @@ live news sentiment factors. Without it, the app still works — it just skips
 that factor type.
 """
 import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse

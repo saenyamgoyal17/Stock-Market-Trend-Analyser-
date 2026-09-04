@@ -82,7 +82,12 @@ def fetch_stock_data(ticker: str, period: str = "1y", interval: str = "1d") -> d
 
     info = {}
     try:
-        info = t.info or {}
+        f_info = t.fast_info
+        info = {
+            "currency": f_info.get("currency"),
+            "exchange": f_info.get("exchange"),
+            "marketCap": f_info.get("market_cap"),
+        }
     except Exception:
         info = {}
 

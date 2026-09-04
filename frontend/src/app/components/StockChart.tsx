@@ -61,7 +61,7 @@ export const StockChart: React.FC<StockChartProps> = ({
   const [range, setRange] = useState('1mo');
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeModel, setActiveModel] = useState<'xgboost' | 'arima' | 'prophet' | 'lstm'>('xgboost');
+  const [activeModel, setActiveModel] = useState<'xgboost' | 'lightgbm' | 'catboost' | 'arima' | 'prophet' | 'lstm'>('xgboost');
   const [mlPredictions, setMlPredictions] = useState<MLForecastResults | null>(null);
   const [factors, setFactors] = useState<DetectedFactorEvent[]>([]);
   const [isForecastVisible, setIsForecastVisible] = useState(true);
@@ -172,21 +172,28 @@ export const StockChart: React.FC<StockChartProps> = ({
               <span className="font-mono uppercase">AI:</span>
             </button>
 
-            {(['xgboost', 'arima', 'prophet', 'lstm'] as const).map(m => (
+            {([
+              { id: 'xgboost', label: '⭐ XGB' },
+              { id: 'lightgbm', label: '⚡ LightGBM' },
+              { id: 'catboost', label: '🌲 CatBoost' },
+              { id: 'lstm', label: '🧠 PyTorch' },
+              { id: 'prophet', label: 'Prophet' },
+              { id: 'arima', label: 'ARIMA' },
+            ] as const).map(m => (
               <button
-                key={m}
+                key={m.id}
                 onClick={() => {
-                  setActiveModel(m);
+                  setActiveModel(m.id as any);
                   setIsForecastVisible(true);
                 }}
                 className="px-2.5 py-1 rounded-lg transition-all font-mono uppercase text-[11px]"
                 style={{
-                  background: activeModel === m && isForecastVisible ? '#00D09C' : 'transparent',
-                  color: activeModel === m && isForecastVisible ? '#FFFFFF' : '#00D09C',
-                  fontWeight: activeModel === m && isForecastVisible ? 700 : 500,
+                  background: activeModel === m.id && isForecastVisible ? '#00D09C' : 'transparent',
+                  color: activeModel === m.id && isForecastVisible ? '#FFFFFF' : '#00D09C',
+                  fontWeight: activeModel === m.id && isForecastVisible ? 700 : 500,
                 }}
               >
-                {m === 'xgboost' ? '⭐ XGB' : m}
+                {m.label}
               </button>
             ))}
           </div>
