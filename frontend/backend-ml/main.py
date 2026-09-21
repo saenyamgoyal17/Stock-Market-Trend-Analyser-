@@ -45,10 +45,10 @@ def root():
 
 
 @app.get("/api/stock/{ticker}")
-def get_stock(ticker: str, period: str = Query("1y")):
+def get_stock(ticker: str, period: str = Query("1y"), interval: str = Query(None)):
     """Core endpoint: price history + metadata + currency."""
     try:
-        return fetch_stock_data(ticker, period=period)
+        return fetch_stock_data(ticker, period=period, interval=interval)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -115,3 +115,63 @@ def get_full(ticker: str, period: str = Query("1y"), horizon: int = Query(15)):
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+
+
+@app.get("/api/macro/realtime")
+def get_realtime_macro():
+    """Real-time macroeconomic feeds: Crude Oil, Gold, 10Y Treasury, VIX, US Dollar Index."""
+    import yfinance as yf
+    from datetime import datetime
+
+    macro_specs = [
+        {"symbol": "CL=F", "name": "WTI Crude Oil", "unit": "$/bbl", "category": "Energy", "description": "Global petroleum benchmark reflecting Middle East geopolitical tensions and supply shocks."},
+        {"symbol": "GC=F", "name": "Gold Spot", "unit": "$/oz", "category": "Precious Metals", "description": "Safe haven asset and inflation hedge during currency devaluation and conflict."},
+        {"symbol": "^TNX", "name": "US 10Y Treasury Yield", "unit": "%", "category": "Rates", "description": "Benchmark risk-free discount rate dictating equity valuations and borrowing costs."},
+        {"symbol": "^VIX", "name": "CBOE Volatility (VIX)", "unit": "pts", "category": "Market Sentiment", "description": "Wall Street fear gauge measuring 30-day forward implied volatility."},
+        {"symbol": "DX-Y.NYB", "name": "US Dollar Index (DXY)", "unit": "pts", "category": "Currencies", "description": "Strength of USD against a basket of 6 major global currencies."},
+        {"symbol": "^GSPC", "name": "S&P 500 Index", "unit": "pts", "category": "Global Equity", "description": "Core benchmark for US large-cap institutional equity exposure."},
+        {"symbol": "^NSEI", "name": "NIFTY 50 Index", "unit": "₹", "category": "Emerging Market", "description": "Benchmark for Indian equity market and foreign institutional inflow sentiment."},
+    ]
+
+    results = []
+    for spec in macro_specs:
+        try:
+            t = yf.Ticker(spec["symbol"])
+            h = t.history(period="5d")
+            if not h.empty:
+                last_price = float(h["Close"].iloc[-1])
+                prev_price = float(h["Close"].iloc[-2]) if len(h) > 1 else last_price
+                change = round(last_price - prev_price, 2)
+                change_pct = round((change / prev_price) * 100, 2) if prev_price else 0.0
+
+                signal = "bullish" if change >= 0 else "bearish"
+                if spec["symbol"] in ["^VIX", "CL=F", "^TNX"]:
+                    # Spikes in VIX or Yields often act as bearish drag on growth equities
+                    implication = f"{'Elevated' if change > 0 else 'Subdued'} pressure on growth equities and corporate margins."
+                elif spec["symbol"] == "GC=F":
+                    implication = f"{'Capital fleeing to safe-havens' if change > 0 else 'Risk-on capital rotation away from safety'}."
+                else:
+                    implication = f"{'Momentum expansion' if change > 0 else 'Momentum deceleration'} across major liquidity pools."
+
+                results.append({
+                    "symbol": spec["symbol"],
+                    "name": spec["name"],
+                    "unit": spec["unit"],
+                    "category": spec["category"],
+                    "description": spec["description"],
+                    "value": round(last_price, 2),
+                    "change": change,
+                    "change_pct": change_pct,
+                    "signal": signal,
+                    "implication": implication,
+                    "timestamp": datetime.now().isoformat(),
+                })
+        except Exception as e:
+            continue
+
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "macro_indicators": results,
+        "summary": "Real-time macroeconomic feeds active with live volatility, yields, and commodity pricing.",
+    }
+

@@ -93,24 +93,40 @@ export function calculateStockPrediction(stock: { symbol: string; name: string; 
 }
 
 // 2. Geopolitical Shock / External Factor Sure-Shot Predictor
-export function predictGeopoliticalShock(scenarioText: string): GeopoliticalScenarioPrediction {
+export function predictGeopoliticalShock(
+  scenarioText: string,
+  liveQuotes?: Record<string, { price: number; pct?: number }>
+): GeopoliticalScenarioPrediction {
   const isMidEastWar = /iran|israel|middle east|gaza|red sea|houthi|strait of hormuz|missile|war/i.test(scenarioText);
   const isTariff = /tariff|trade war|import duty|ban|embargo|sanction|china|biden|trump/i.test(scenarioText);
   const isFed = /fed|interest rate|powell|inflation|rate cut|rate hike|central bank/i.test(scenarioText);
 
+  const getPrice = (sym: string, fallback: number) => {
+    return liveQuotes?.[sym]?.price && liveQuotes[sym].price > 0 ? liveQuotes[sym].price : fallback;
+  };
+
+  const getTarget = (currPrice: number, movePct: number) => {
+    return +(currPrice * (1 + movePct / 100)).toFixed(2);
+  };
+
   if (isMidEastWar) {
+    const pLmt = getPrice("LMT", 492.30);
+    const pRel = getPrice("RELIANCE.NS", 2980.50);
+    const pShel = getPrice("SHEL.L", 2780.00);
+    const pDal = getPrice("DAL", 48.20);
+
     return {
       scenarioHeadline: scenarioText,
       category: 'MILITARY',
       macroImpactSentiment: -0.68,
-      summary: "Escalation in the Middle East directly threats the Strait of Hormuz transit corridor (20% of global petroleum flow), creating an immediate spike in crude benchmarks and defense procurement, while introducing severe margin compression across commercial aviation and consumer discretionary.",
+      summary: "Escalation in the Middle East directly threatens the Strait of Hormuz transit corridor (20% of global petroleum flow), creating an immediate spike in crude benchmarks and defense procurement, while introducing severe margin compression across commercial aviation and consumer discretionary.",
       highProbabilityPicks: [
         {
           symbol: "LMT",
           name: "Lockheed Martin Corp.",
           currency: "USD",
-          currentPrice: 492.30,
-          predictedPrice: 526.70,
+          currentPrice: pLmt,
+          predictedPrice: getTarget(pLmt, 7.0),
           direction: "UP",
           winProbability: 94,
           expectedMovePct: 7.0,
@@ -122,8 +138,8 @@ export function predictGeopoliticalShock(scenarioText: string): GeopoliticalScen
           symbol: "RELIANCE.NS",
           name: "Reliance Industries Ltd",
           currency: "INR",
-          currentPrice: 2980.50,
-          predictedPrice: 3125.00,
+          currentPrice: pRel,
+          predictedPrice: getTarget(pRel, 4.85),
           direction: "UP",
           winProbability: 91,
           expectedMovePct: 4.85,
@@ -135,8 +151,8 @@ export function predictGeopoliticalShock(scenarioText: string): GeopoliticalScen
           symbol: "SHEL.L",
           name: "Shell plc",
           currency: "GBP",
-          currentPrice: 2780.00,
-          predictedPrice: 2940.00,
+          currentPrice: pShel,
+          predictedPrice: getTarget(pShel, 5.75),
           direction: "UP",
           winProbability: 89,
           expectedMovePct: 5.75,
@@ -148,8 +164,8 @@ export function predictGeopoliticalShock(scenarioText: string): GeopoliticalScen
           symbol: "DAL",
           name: "Delta Air Lines",
           currency: "USD",
-          currentPrice: 48.20,
-          predictedPrice: 44.50,
+          currentPrice: pDal,
+          predictedPrice: getTarget(pDal, -7.68),
           direction: "DOWN",
           winProbability: 92,
           expectedMovePct: -7.68,
@@ -170,6 +186,10 @@ export function predictGeopoliticalShock(scenarioText: string): GeopoliticalScen
       ]
     };
   } else if (isTariff) {
+    const pNvda = getPrice("NVDA", 128.90);
+    const pAapl = getPrice("AAPL", 228.50);
+    const pTsla = getPrice("TSLA", 218.40);
+
     return {
       scenarioHeadline: scenarioText,
       category: 'TARIFF',
@@ -180,8 +200,8 @@ export function predictGeopoliticalShock(scenarioText: string): GeopoliticalScen
           symbol: "NVDA",
           name: "NVIDIA Corporation",
           currency: "USD",
-          currentPrice: 128.90,
-          predictedPrice: 121.80,
+          currentPrice: pNvda,
+          predictedPrice: getTarget(pNvda, -5.51),
           direction: "DOWN",
           winProbability: 93,
           expectedMovePct: -5.51,
@@ -193,8 +213,8 @@ export function predictGeopoliticalShock(scenarioText: string): GeopoliticalScen
           symbol: "AAPL",
           name: "Apple Inc.",
           currency: "USD",
-          currentPrice: 228.50,
-          predictedPrice: 219.00,
+          currentPrice: pAapl,
+          predictedPrice: getTarget(pAapl, -4.16),
           direction: "DOWN",
           winProbability: 90,
           expectedMovePct: -4.16,
@@ -206,8 +226,8 @@ export function predictGeopoliticalShock(scenarioText: string): GeopoliticalScen
           symbol: "TSLA",
           name: "Tesla Inc.",
           currency: "USD",
-          currentPrice: 218.40,
-          predictedPrice: 206.00,
+          currentPrice: pTsla,
+          predictedPrice: getTarget(pTsla, -5.68),
           direction: "DOWN",
           winProbability: 88,
           expectedMovePct: -5.68,
@@ -229,6 +249,10 @@ export function predictGeopoliticalShock(scenarioText: string): GeopoliticalScen
   }
 
   // Default Central Bank / Macro Scenario
+  const pMsft = getPrice("MSFT", 448.20);
+  const pTcs = getPrice("TCS.NS", 2320.00);
+  const pJpm = getPrice("JPM", 215.10);
+
   return {
     scenarioHeadline: scenarioText,
     category: 'CENTRAL_BANK',
@@ -239,8 +263,8 @@ export function predictGeopoliticalShock(scenarioText: string): GeopoliticalScen
         symbol: "MSFT",
         name: "Microsoft Corporation",
         currency: "USD",
-        currentPrice: 448.20,
-        predictedPrice: 468.00,
+        currentPrice: pMsft,
+        predictedPrice: getTarget(pMsft, 4.42),
         direction: "UP",
         winProbability: 92,
         expectedMovePct: 4.42,
@@ -252,8 +276,8 @@ export function predictGeopoliticalShock(scenarioText: string): GeopoliticalScen
         symbol: "TCS.NS",
         name: "Tata Consultancy Services",
         currency: "INR",
-        currentPrice: 4250.00,
-        predictedPrice: 4420.00,
+        currentPrice: pTcs,
+        predictedPrice: getTarget(pTcs, 4.00),
         direction: "UP",
         winProbability: 89,
         expectedMovePct: 4.00,
@@ -265,8 +289,8 @@ export function predictGeopoliticalShock(scenarioText: string): GeopoliticalScen
         symbol: "JPM",
         name: "JPMorgan Chase & Co.",
         currency: "USD",
-        currentPrice: 215.10,
-        predictedPrice: 224.50,
+        currentPrice: pJpm,
+        predictedPrice: getTarget(pJpm, 4.37),
         direction: "UP",
         winProbability: 86,
         expectedMovePct: 4.37,

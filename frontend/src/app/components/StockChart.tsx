@@ -5,9 +5,9 @@ import {
 } from 'recharts';
 import {
   fetchYFChart, ChartPoint, fetchMLPredictions, MLForecastResults,
-  fetchDetectedFactors, DetectedFactorEvent,
+  fetchDetectedFactors, DetectedFactorEvent, formatChartDate,
 } from '../../services/api.js';
-import { TrendingUp, TrendingDown, Eye, EyeOff } from 'lucide-react';
+import { TrendingUp, TrendingDown, Eye, EyeOff, X, AlertCircle, ExternalLink } from 'lucide-react';
 
 interface StockChartProps {
   symbol: string;
@@ -34,28 +34,13 @@ const IMPACT_COLOR: Record<string, string> = {
   low: '#5367FF',
 };
 
-/**
- * Format a forecast ISO date string (e.g. "2026-09-01") to match the chart's
- * date label format for the given range so the x-axis stays consistent.
- */
-function formatForecastDate(isoDate: string, range: string): string {
-  const d = new Date(isoDate + 'T12:00:00'); // noon to avoid timezone shift
-  if (range === '1d' || range === '5d') {
-    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-  }
-  if (range === '1mo' || range === '3mo' || range === '6mo') {
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  }
-  return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
-}
-
 export const StockChart: React.FC<StockChartProps> = ({
   symbol,
   currentPrice,
   changePct,
   height = 340,
   showMLOverlay = true,
-  currencySymbol = '₹',
+  currencySymbol,
   onFactorClick,
 }) => {
   const [range, setRange] = useState('1mo');
@@ -64,47 +49,63 @@ export const StockChart: React.FC<StockChartProps> = ({
   const [activeModel, setActiveModel] = useState<'xgboost' | 'lightgbm' | 'catboost' | 'arima' | 'prophet' | 'lstm'>('xgboost');
   const [mlPredictions, setMlPredictions] = useState<MLForecastResults | null>(null);
   const [factors, setFactors] = useState<DetectedFactorEvent[]>([]);
+  const [hoveredFactor, setHoveredFactor] = useState<{
+    factor: DetectedFactorEvent;
+    x: number;
+    y: number;
+    price: number;
+  } | null>(null);
+  const [pinnedFactor, setPinnedFactor] = useState<DetectedFactorEvent | null>(null);
+  const chartContainerRef = React.useRef<HTMLDivElement>(null);
   const [isForecastVisible, setIsForecastVisible] = useState(true);
   const [baseChart, setBaseChart] = useState<ChartPoint[]>([]);
 
-  // Fetch chart + ML data when symbol or range changes
+  // Automatically determine currency symbol if not explicitly provided
+  const effectiveCurrency = currencySymbol || (
+    symbol.endsWith('.NS') || symbol.endsWith('.BO') ? '₹' :
+    symbol.endsWith('.L') ? '£' : '$'
+  );
+
+  // 1. Fetch ML predictions & detected factors when symbol changes
+  useEffect(() => {
+    let cancelled = false;
+    const mlPeriod = '1y';
+
+    Promise.allSettled([
+      fetchMLPredictions(symbol, mlPeriod, 15, currentPrice),
+      fetchDetectedFactors(symbol, mlPeriod),
+    ]).then(([mlRes, factorsRes]) => {
+      if (cancelled) return;
+      if (mlRes.status === 'fulfilled') {
+        setMlPredictions(mlRes.value);
+      }
+      if (factorsRes.status === 'fulfilled') {
+        setFactors(factorsRes.value);
+      }
+    });
+
+    return () => { cancelled = true; };
+  }, [symbol]);
+
+  // 2. Fetch chart data whenever symbol OR range changes
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
 
-    // For ML, always use 1y history regardless of chart range — the models need enough data
-    const mlPeriod = '1y';
-
-    Promise.allSettled([
-      fetchYFChart(symbol, range),
-      fetchMLPredictions(symbol, mlPeriod, 15, currentPrice),
-      fetchDetectedFactors(symbol, mlPeriod),
-    ]).then(([chartRes, mlRes, factorsRes]) => {
+    fetchYFChart(symbol, range).then(chart => {
       if (cancelled) return;
-
-      let chart: ChartPoint[] = [];
-      if (chartRes.status === 'fulfilled' && chartRes.value.length > 0) {
-        chart = chartRes.value;
-      } else {
-        chart = generateFallback(currentPrice, range);
-      }
-      setBaseChart(chart);
-
-      if (mlRes.status === 'fulfilled') {
-        setMlPredictions(mlRes.value);
-      }
-
-      if (factorsRes.status === 'fulfilled') {
-        setFactors(factorsRes.value);
-      }
-
+      setBaseChart(chart || []);
+      setLoading(false);
+    }).catch(() => {
+      if (cancelled) return;
+      setBaseChart([]);
       setLoading(false);
     });
 
     return () => { cancelled = true; };
-  }, [symbol, range, currentPrice]);
+  }, [symbol, range]);
 
-  // Merge chart + predictions whenever base data, model selection, or visibility changes
+  // Merge chart + predictions whenever base data, predictions, model selection, or visibility changes
   const mergedData = useMemo(() => {
     return mergeChartAndML(baseChart, mlPredictions, activeModel, range, isForecastVisible);
   }, [baseChart, mlPredictions, activeModel, range, isForecastVisible]);
@@ -225,8 +226,94 @@ export const StockChart: React.FC<StockChartProps> = ({
         </div>
       )}
 
+      {/* External Shocks Highlight Banner */}
+      {factors.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 rounded-xl bg-[#FFFBEB] border border-[#FDE68A] text-xs shadow-2xs">
+          <div className="flex items-center gap-2 text-[#92400E]">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#F59E0B] animate-ping" />
+            <span className="font-bold">{factors.length} External Market Shocks</span>
+            <span className="text-[#B45309]">detected along price trajectory</span>
+          </div>
+          <span className="text-[11px] font-semibold text-[#D97706] bg-amber-100/80 px-2 py-0.5 rounded-md">
+            Hover cursor over dots on graph to view shock details
+          </span>
+        </div>
+      )}
+
       {/* Chart Canvas */}
-      <div style={{ height, position: 'relative' }}>
+      <div ref={chartContainerRef} style={{ height, position: 'relative' }}>
+        {/* In-Graph Shock Factor Popover (Pops up directly at the dot!) */}
+        {(pinnedFactor || hoveredFactor?.factor) && (() => {
+          const factor = pinnedFactor || hoveredFactor!.factor;
+          const dotColor = IMPACT_COLOR[factor.impact] || '#F59E0B';
+          const containerWidth = chartContainerRef.current?.clientWidth || 400;
+
+          // Calculate popover coordinates near the hovered dot or pinned card
+          let popoverStyle: React.CSSProperties = { top: 12, left: 12 };
+          if (hoveredFactor) {
+            const left = Math.min(Math.max(hoveredFactor.x - 140, 10), Math.max(containerWidth - 330, 10));
+            const top = hoveredFactor.y > 180
+              ? Math.max(hoveredFactor.y - 185, 8)
+              : hoveredFactor.y + 20;
+            popoverStyle = { left: `${left}px`, top: `${top}px` };
+          }
+
+          return (
+            <div
+              className={`absolute z-40 p-4 rounded-2xl bg-white/95 backdrop-blur-md shadow-2xl border border-[#EAECEF] space-y-2.5 animate-fade-in text-xs max-w-sm transition-all ${
+                pinnedFactor ? 'pointer-events-auto' : 'pointer-events-none select-none'
+              }`}
+              style={popoverStyle}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span
+                  className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide"
+                  style={{
+                    background: dotColor + '20',
+                    color: dotColor,
+                  }}
+                >
+                  {factor.type.replace(/_/g, ' ')} · {factor.impact} impact
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[#9B9EA7] font-mono text-[11px]">{factor.date}</span>
+                  {pinnedFactor && (
+                    <button
+                      onClick={() => setPinnedFactor(null)}
+                      className="p-1 rounded-lg hover:bg-[#F4F4F7] text-[#7C7E8C] transition-colors"
+                      title="Close"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <h4 className="text-sm font-bold text-[#111827] leading-snug">{factor.title}</h4>
+              <p className="text-xs text-[#6B7280] leading-relaxed">{factor.description}</p>
+
+              <div className="pt-2 border-t border-[#F0F0F2] flex items-center justify-between text-[11px]">
+                {hoveredFactor?.price != null && (
+                  <span className="font-mono text-[#7C7E8C]">
+                    Price: <b className="text-[#111827]">{effectiveCurrency}{hoveredFactor.price.toFixed(2)}</b>
+                  </span>
+                )}
+                {factor.sentiment_score != null && (
+                  <span
+                    className="font-bold font-mono px-2 py-0.5 rounded-md text-[10px]"
+                    style={{
+                      background: factor.sentiment_score >= 0 ? '#EBFCF7' : '#FEF2F2',
+                      color: factor.sentiment_score >= 0 ? '#00D09C' : '#EB5B3C',
+                    }}
+                  >
+                    {factor.sentiment_score >= 0 ? '▲ Bullish Impulse' : '▼ Bearish Shock'} ({(Math.abs(factor.sentiment_score) * 100).toFixed(0)}%)
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-10 rounded-2xl">
             <div className="text-sm font-semibold text-[#7C7E8C] flex items-center gap-2">
@@ -248,6 +335,16 @@ export const StockChart: React.FC<StockChartProps> = ({
                   <stop offset="0%" stopColor="#F59E0B" stopOpacity={0.12} />
                   <stop offset="100%" stopColor="#F59E0B" stopOpacity={0.03} />
                 </linearGradient>
+                {/* Modern Apple Stocks / Fintech Neon Glow Filters */}
+                <filter id="neon-glow-high" x="-60%" y="-60%" width="220%" height="220%">
+                  <feDropShadow dx="0" dy="0" stdDeviation="3" floodColor="#EB5B3C" floodOpacity="0.75" />
+                </filter>
+                <filter id="neon-glow-medium" x="-60%" y="-60%" width="220%" height="220%">
+                  <feDropShadow dx="0" dy="0" stdDeviation="3" floodColor="#F59E0B" floodOpacity="0.75" />
+                </filter>
+                <filter id="neon-glow-low" x="-60%" y="-60%" width="220%" height="220%">
+                  <feDropShadow dx="0" dy="0" stdDeviation="3" floodColor="#5367FF" floodOpacity="0.75" />
+                </filter>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F2" vertical={false} />
               <XAxis
@@ -262,7 +359,7 @@ export const StockChart: React.FC<StockChartProps> = ({
                 tick={{ fill: '#9B9EA7', fontSize: 11 }}
                 tickLine={false}
                 axisLine={false}
-                tickFormatter={(v: number) => `${currencySymbol}${v >= 10000 ? `${(v/1000).toFixed(1)}k` : v >= 1000 ? `${(v/1000).toFixed(1)}k` : v.toFixed(0)}`}
+                tickFormatter={(v: number) => `${effectiveCurrency}${v >= 10000 ? `${(v/1000).toFixed(1)}k` : v >= 1000 ? `${(v/1000).toFixed(1)}k` : v.toFixed(0)}`}
                 width={65}
               />
               <Tooltip
@@ -273,12 +370,12 @@ export const StockChart: React.FC<StockChartProps> = ({
                   return (
                     <div className="px-3.5 py-2.5 rounded-xl shadow-xl text-xs bg-white border border-[#EAECEF] space-y-1">
                       <div className="font-bold text-sm text-[#44475B]">
-                        {currencySymbol}{displayPrice?.toFixed(2)}
+                        {effectiveCurrency}{displayPrice?.toFixed(2)}
                       </div>
                       <div className="text-[#9B9EA7] font-mono">{p.date}</div>
                       {p.isForecast && (
                         <div className="text-[11px] font-semibold text-[#F59E0B] pt-1 border-t border-[#EAECEF]">
-                          {activeModel.toUpperCase()} Forecast · Band: {currencySymbol}{p.lower?.toFixed(2)} – {currencySymbol}{p.upper?.toFixed(2)}
+                          {activeModel.toUpperCase()} Forecast · Band: {effectiveCurrency}{p.lower?.toFixed(2)} – {effectiveCurrency}{p.upper?.toFixed(2)}
                         </div>
                       )}
                       {p.volume > 0 && (
@@ -336,22 +433,83 @@ export const StockChart: React.FC<StockChartProps> = ({
                 />
               )}
 
-              {/* Factor event dots on chart */}
+              {/* Highlighted Factor Event Dots on Chart */}
               {factors.map((factor, idx) => {
-                const matchPoint = data.find(d => d.date === factor.date || d.date?.includes(factor.date?.slice(5)));
-                if (!matchPoint || !matchPoint.close) return null;
+                const factorTs = new Date(factor.date + 'T12:00:00Z').getTime();
+                // Match by exact isoDate, formatted date string, or nearest historical trading point
+                const matchPoint =
+                  data.find(d => !d.isForecast && (
+                    d.isoDate === factor.date ||
+                    d.date === factor.date ||
+                    (d.time && new Date(d.time).toISOString().slice(0, 10) === factor.date)
+                  )) ||
+                  data
+                    .filter(d => !d.isForecast && d.time && Math.abs(d.time - factorTs) <= 86400000 * 3)
+                    .sort((a, b) => Math.abs(a.time - factorTs) - Math.abs(b.time - factorTs))[0];
+
+                if (!matchPoint || matchPoint.close == null || matchPoint.close <= 0) return null;
                 const dotColor = IMPACT_COLOR[factor.impact] || '#F59E0B';
+                const isHovered = hoveredFactor?.factor.title === factor.title;
+                const isPinned = pinnedFactor?.title === factor.title;
+                const isSelected = isHovered || isPinned;
+
                 return (
                   <ReferenceDot
-                    key={idx}
+                    key={`${factor.date}-${idx}`}
                     x={matchPoint.date}
                     y={matchPoint.close}
-                    r={5}
+                    r={isSelected ? 5.5 : 4}
                     fill={dotColor}
                     stroke="#FFFFFF"
-                    strokeWidth={2}
-                    onClick={() => onFactorClick && onFactorClick(factor)}
-                    style={{ cursor: 'pointer' }}
+                    strokeWidth={1.5}
+                    shape={(props: any) => {
+                      const { cx, cy } = props;
+                      if (cx == null || cy == null) return null;
+                      const neonFilter = `url(#neon-glow-${factor.impact || 'medium'})`;
+
+                      return (
+                        <g
+                          className="cursor-pointer"
+                          onMouseEnter={() => setHoveredFactor({ factor, x: cx, y: cy, price: matchPoint.close })}
+                          onMouseLeave={() => setHoveredFactor(null)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPinnedFactor(prev => prev?.title === factor.title ? null : factor);
+                          }}
+                        >
+                          {/* Invisible expanded hit target to prevent any cursor flutter or jitter */}
+                          <circle
+                            cx={cx}
+                            cy={cy}
+                            r={16}
+                            fill="transparent"
+                            style={{ pointerEvents: 'all' }}
+                          />
+
+                          {/* Soft Ambient Neon Bloom Halo */}
+                          <circle
+                            cx={cx}
+                            cy={cy}
+                            r={isSelected ? 11 : 7.5}
+                            fill={dotColor}
+                            fillOpacity={isSelected ? 0.32 : 0.16}
+                            style={{ pointerEvents: 'none', transition: 'all 0.15s ease' }}
+                          />
+
+                          {/* Crisp Flat Solid Neon Micro-Dot */}
+                          <circle
+                            cx={cx}
+                            cy={cy}
+                            r={isSelected ? 5.5 : 4}
+                            fill={dotColor}
+                            stroke="#FFFFFF"
+                            strokeWidth={1.5}
+                            filter={neonFilter}
+                            style={{ pointerEvents: 'none', transition: 'all 0.15s ease' }}
+                          />
+                        </g>
+                      );
+                    }}
                   />
                 );
               })}
@@ -381,9 +539,9 @@ export const StockChart: React.FC<StockChartProps> = ({
 /**
  * Merges historical chart points with forward ML forecast.
  *
- * Displays the backend's raw predicted/lower/upper values directly — NO rescaling.
- * The backend already returns correct absolute prices anchored to the actual last close.
- * The only transformation is date formatting so the x-axis stays consistent.
+ * Anchors the forecast trajectory directly to the live anchorPrice (last candle close)
+ * with 0% gap or cliff, tailoring step counts and intervals cleanly for 1D, 1W, 1M, 3M, 1Y, 5Y.
+ * Every historical and forecast point has a 100% unique date string for Recharts.
  */
 function mergeChartAndML(
   baseChart: ChartPoint[],
@@ -408,68 +566,99 @@ function mergeChartAndML(
 
   const lastPoint = points[points.length - 1];
   const anchorPrice = lastPoint.close;
+  const lastTime = lastPoint.time || Date.now();
   if (!anchorPrice || anchorPrice <= 0) return points;
 
   // Set predicted on the last historical point = anchorPrice (seamless connection)
   lastPoint.predicted = anchorPrice;
 
-  // Display the backend's raw forecast values directly — no rescaling
-  forecastData.forEach((f: any, idx: number) => {
-    // On intraday views, limit forecast points
-    if ((range === '1d' || range === '5d') && idx >= 5) return;
+  // Step configuration for each range
+  let count = 15;
+  let stepMs = 86400000;
 
-    const predicted = f.predicted;
-    if (!predicted || predicted <= 0) return;
+  if (range === '1d') {
+    count = 5; // 5 intraday forward steps (~1-2 hours)
+    stepMs = 15 * 60 * 1000; // 15 mins each
+  } else if (range === '5d') {
+    count = 6; // 6 intervals spanning next 1-2 trading days
+    stepMs = 2 * 3600 * 1000; // 2 hrs each
+  } else if (range === '1mo') {
+    count = 5; // next 5 business days
+    stepMs = 86400000;
+  } else if (range === '3mo') {
+    count = 10; // next 10 business days
+    stepMs = 86400000;
+  } else if (range === '1y') {
+    count = 15; // next 15 business days
+    stepMs = 86400000;
+  } else if (range === '5y') {
+    count = 10; // next 10 weeks
+    stepMs = 7 * 86400000; // 1 week each
+  }
 
-    // Use raw backend confidence bands, or synthesize if missing
-    let bandLow: number, bandHigh: number;
-    if (f.lower != null && f.upper != null && f.lower > 0 && f.upper > 0) {
-      bandLow = +f.lower.toFixed(2);
-      bandHigh = +f.upper.toFixed(2);
+  const firstPred = forecastData[0]?.predicted || anchorPrice;
+  const lastPred = forecastData[Math.min(count, forecastData.length) - 1]?.predicted || firstPred;
+  const totalDrift = firstPred > 0 ? (lastPred - firstPred) : 0;
+
+  for (let idx = 0; idx < count; idx++) {
+    const stepTime = lastTime + (idx + 1) * stepMs;
+    const dateStr = formatChartDate(stepTime, range);
+
+    let predicted: number;
+    let lower: number;
+    let upper: number;
+
+    if (range === '1d') {
+      const intradayFactor = (idx + 1) / count;
+      const intradayDrift = totalDrift * 0.25 * intradayFactor;
+      predicted = +(anchorPrice + intradayDrift).toFixed(2);
+      const band = predicted * 0.003 * Math.sqrt(idx + 1);
+      lower = +(predicted - band).toFixed(2);
+      upper = +(predicted + band).toFixed(2);
+    } else if (range === '5d') {
+      const factor = (idx + 1) / count;
+      const multiDayDrift = totalDrift * 0.6 * factor;
+      predicted = +(anchorPrice + multiDayDrift).toFixed(2);
+      const band = predicted * 0.006 * Math.sqrt(idx + 1);
+      lower = +(predicted - band).toFixed(2);
+      upper = +(predicted + band).toFixed(2);
+    } else if (range === '5y') {
+      const factor = (idx + 1) / count;
+      const weeklyDrift = totalDrift * 2.0 * factor;
+      predicted = +(anchorPrice + weeklyDrift).toFixed(2);
+      const band = predicted * 0.018 * Math.sqrt(idx + 1);
+      lower = +(predicted - band).toFixed(2);
+      upper = +(predicted + band).toFixed(2);
     } else {
-      const spread = predicted * 0.012 * Math.sqrt(idx + 1);
-      bandLow = +(predicted - spread).toFixed(2);
-      bandHigh = +(predicted + spread).toFixed(2);
+      // 1mo, 3mo, 1y: anchored directly to current price + model predicted drift
+      const f = forecastData[idx] || forecastData[forecastData.length - 1];
+      const drift = f.predicted - firstPred;
+      predicted = +(anchorPrice + drift).toFixed(2);
+
+      if (f.lower != null && f.upper != null && f.lower > 0 && f.upper > 0) {
+        const spreadLower = firstPred - f.lower;
+        const spreadUpper = f.upper - firstPred;
+        lower = +(predicted - spreadLower).toFixed(2);
+        upper = +(predicted + spreadUpper).toFixed(2);
+      } else {
+        const spread = predicted * 0.012 * Math.sqrt(idx + 1);
+        lower = +(predicted - spread).toFixed(2);
+        upper = +(predicted + spread).toFixed(2);
+      }
     }
 
     points.push({
-      date: formatForecastDate(f.date, range),
+      time: stepTime,
+      date: dateStr,
+      isoDate: new Date(stepTime).toISOString().slice(0, 10),
       close: null,
-      predicted: +predicted.toFixed(2),
-      upper: bandHigh,
-      lower: bandLow,
+      predicted,
+      upper,
+      lower,
       volume: 0,
       isForecast: true,
     });
-  });
+  }
 
   return points;
-}
-
-function generateFallback(basePrice: number, range: string): ChartPoint[] {
-  const counts: Record<string, number> = {
-    '1d': 78, '5d': 50, '1mo': 22, '3mo': 65, '1y': 52, '5y': 60,
-  };
-  const n = counts[range] || 30;
-  const pts: ChartPoint[] = [];
-  let p = basePrice * (0.98 + Math.random() * 0.02);
-  const now = Date.now();
-
-  for (let i = n; i >= 0; i--) {
-    const delta = (Math.random() - 0.48) * p * 0.015;
-    p = Math.max(1, p + delta);
-    const t = now - i * (range === '1d' ? 300000 : range === '5d' ? 1800000 : 86400000);
-    pts.push({
-      time: t,
-      date: range === '1d' || range === '5d'
-        ? new Date(t).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
-        : new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      open: +(p - delta * 0.5).toFixed(2),
-      high: +(p * 1.003).toFixed(2),
-      low: +(p * 0.997).toFixed(2),
-      close: +p.toFixed(2),
-      volume: Math.floor(500000 + Math.random() * 3000000),
-    });
-  }
-  return pts;
 }

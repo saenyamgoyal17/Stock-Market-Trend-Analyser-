@@ -16,7 +16,20 @@ KNOWN_INDIAN = {
     "NTPC", "POWERGRID", "ONGC", "COALINDIA", "TATASTEEL", "JSWSTEEL",
     "ADANIENT", "ADANIPORTS", "BAJAJFINSV", "NESTLEIND", "ULTRACEMCO",
     "GRASIM", "HINDZINC", "BSE", "CDSL", "ZOMATO", "PAYTM", "NYKAA",
-    "JIOFIN", "BEL", "HAL", "VEDL", "IRFC", "RVNL", "IOC", "BPCL"
+    "JIOFIN", "BEL", "HAL", "VEDL", "IRFC", "RVNL", "IOC", "BPCL",
+    "TECHM", "DIVISLAB", "DRREDDY", "EICHERMOT", "HEROMOTOCO", "CIPLA",
+    "APOLLOHOSP", "SHRIRAMFIN", "INDUSINDBK", "CHOLAFIN", "TRENT", "POLYCAB",
+    "DLF", "VBL", "SWIGGY", "DMART", "MOTHERSON", "PIDILITIND", "SIEMENS", "ABB"
+}
+
+# Real-world demerger and ticker transition aliases (e.g. Tata Motors demerger, Zomato -> Eternal)
+TICKER_ALIASES = {
+    "TATAMOTORS": "TMPV.NS",
+    "TATAMOTORS.NS": "TMPV.NS",
+    "TATAMOTORS.BO": "TMPV.BO",
+    "ZOMATO": "ETERNAL.NS",
+    "ZOMATO.NS": "ETERNAL.NS",
+    "ZOMATO.BO": "ETERNAL.BO",
 }
 
 
@@ -24,6 +37,8 @@ def normalize_ticker(ticker: str) -> str:
     """Allow users to type 'RELIANCE' or 'TCS' and default to NSE if no suffix given
     and it looks like an Indian stock (heuristic: user can also just type AAPL etc.)"""
     t = ticker.strip().upper()
+    if t in TICKER_ALIASES:
+        return TICKER_ALIASES[t]
     if not (t.endswith(INDIAN_SUFFIXES) or "." in t or t.startswith("^")):
         if t in KNOWN_INDIAN:
             return f"{t}.NS"
@@ -31,7 +46,7 @@ def normalize_ticker(ticker: str) -> str:
 
 
 def get_currency_and_exchange(ticker: str, info: dict) -> dict:
-    is_indian = ticker.endswith(INDIAN_SUFFIXES) or ticker in KNOWN_INDIAN
+    is_indian = ticker.endswith(INDIAN_SUFFIXES) or ticker in KNOWN_INDIAN or ticker in ("TMPV.NS", "ETERNAL.NS", "TMCV.NS")
     currency = info.get("currency")
     if not currency:
         currency = "INR" if is_indian else "USD"
@@ -48,8 +63,22 @@ def get_currency_and_exchange(ticker: str, info: dict) -> dict:
     }
 
 
-def fetch_stock_data(ticker: str, period: str = "1y", interval: str = "1d") -> dict:
+def fetch_stock_data(ticker: str, period: str = "1y", interval: str = None) -> dict:
     target_ticker = normalize_ticker(ticker)
+
+    # Automatically resolve optimal interval based on requested timeframe
+    if not interval or interval == "auto":
+        if period == "1d":
+            interval = "2m"
+        elif period in ("5d", "1w"):
+            interval = "15m"
+        elif period in ("1mo", "3mo", "6mo"):
+            interval = "1d"
+        elif period in ("1y", "2y"):
+            interval = "1d"
+        else:
+            interval = "1wk"
+
     t = yf.Ticker(target_ticker)
 
     # fetch price history first — this is the critical path and shouldn't be
@@ -72,6 +101,18 @@ def fetch_stock_data(ticker: str, period: str = "1y", interval: str = "1d") -> d
                     break
             except Exception:
                 continue
+
+    if (hist.empty or len(hist) < 10) and target_ticker.endswith(".BO"):
+        try:
+            ns_cand = target_ticker[:-3] + ".NS"
+            t_ns = yf.Ticker(ns_cand)
+            h_ns = t_ns.history(period=period, interval=interval)
+            if not h_ns.empty and len(h_ns) > len(hist):
+                target_ticker = ns_cand
+                t = t_ns
+                hist = h_ns
+        except Exception:
+            pass
 
     if hist.empty:
         raise ValueError(
@@ -101,18 +142,30 @@ def fetch_stock_data(ticker: str, period: str = "1y", interval: str = "1d") -> d
 
     meta = get_currency_and_exchange(target_ticker, info)
 
-    price_data = [
-        {
+    price_data = []
+    for _, row in hist.iterrows():
+        if pd.isna(row["Close"]) or float(row["Close"]) <= 0:
+            continue
+        dt_val = row[date_col]
+        try:
+            epoch_ms = int(dt_val.timestamp() * 1000)
+        except Exception:
+            epoch_ms = int(pd.to_datetime(row["date"]).timestamp() * 1000)
+        try:
+            iso_str = dt_val.strftime("%Y-%m-%d")
+        except Exception:
+            iso_str = str(row["date"])[:10]
+
+        price_data.append({
+            "time": epoch_ms,
             "date": row["date"],
+            "isoDate": iso_str,
             "open": round(float(row["Open"]), 2),
             "high": round(float(row["High"]), 2),
             "low": round(float(row["Low"]), 2),
             "close": round(float(row["Close"]), 2),
             "volume": int(row["Volume"]) if pd.notna(row["Volume"]) else 0,
-        }
-        for _, row in hist.iterrows()
-        if pd.notna(row["Close"]) and float(row["Close"]) > 0
-    ]
+        })
 
     if not price_data:
         raise ValueError(f"Price history for '{ticker}' contains no valid records.")

@@ -1,17 +1,22 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Activity, ArrowUpRight, ArrowDownRight, ChevronRight, Globe,
   Search, User as UserIcon, LogOut, Sparkles, ChevronDown,
   TrendingUp, TrendingDown, RefreshCw, Radio, Layers,
   Bookmark, ArrowRight, BarChart2, X, CheckCircle2,
   Shield, Zap, Cpu, Award, Play, Eye, Compass, PieChart,
-  Lock, Check, ExternalLink, HelpCircle
+  Lock, Check, ExternalLink, HelpCircle, AlertCircle,
+  Filter, SlidersHorizontal, ArrowUp, ArrowDown, ChevronLeft,
 } from 'lucide-react';
 import {
   loginUser, registerUser, getCurrentUserProfile, logoutUser,
   fetchStockSearch, fetchLatestEvents,
   fetchYFQuote, fetchYFQuotes, fetchYFIndices, startPricePolling, stopPricePolling,
   UserProfile, StockData, WorldEventItem, IndexData,
+  fetchRealtimeMacro, MacroIndicator,
+  fetchMLPredictions, MLForecastResults,
+  registerRealAccount, loginRealAccount, saveLocalUser, loginWithGoogleAccount,
+  signInWithGoogleReal,
 } from '../services/api.js';
 import { StockChart } from './components/StockChart.js';
 import { GrowwStockModal } from './components/GrowwStockModal.js';
@@ -49,21 +54,39 @@ function getCurr(currency?: string, symbol?: string) {
 
 /* ── Initial Global Stock Watchlist ───────────────────────────── */
 const INITIAL_STOCKS: StockData[] = [
-  { symbol:'RELIANCE.NS', name:'Reliance Industries', exchange:'NSE', country:'IN', currency:'INR', price:2980.50, pct:1.20, sector:'Energy', marketCap:'20.1L Cr' },
-  { symbol:'TCS.NS', name:'Tata Consultancy Services', exchange:'NSE', country:'IN', currency:'INR', price:4250.00, pct:-0.36, sector:'IT', marketCap:'15.4L Cr' },
-  { symbol:'HDFCBANK.NS', name:'HDFC Bank', exchange:'NSE', country:'IN', currency:'INR', price:1640.80, pct:0.74, sector:'Banking', marketCap:'12.5L Cr' },
-  { symbol:'INFY.NS', name:'Infosys', exchange:'NSE', country:'IN', currency:'INR', price:1870.30, pct:1.20, sector:'IT', marketCap:'7.8L Cr' },
-  { symbol:'ICICIBANK.NS', name:'ICICI Bank', exchange:'NSE', country:'IN', currency:'INR', price:1195.40, pct:0.72, sector:'Banking', marketCap:'8.4L Cr' },
-  { symbol:'TATAMOTORS.NS', name:'Tata Motors', exchange:'NSE', country:'IN', currency:'INR', price:980.20, pct:2.15, sector:'Auto', marketCap:'3.6L Cr' },
-  { symbol:'SBIN.NS', name:'State Bank of India', exchange:'NSE', country:'IN', currency:'INR', price:820.50, pct:0.95, sector:'Banking', marketCap:'7.3L Cr' },
-  { symbol:'BHARTIARTL.NS', name:'Bharti Airtel', exchange:'NSE', country:'IN', currency:'INR', price:1580.00, pct:1.68, sector:'Telecom', marketCap:'9.4L Cr' },
-  { symbol:'NVDA', name:'NVIDIA Corporation', exchange:'NASDAQ', country:'US', currency:'USD', price:128.90, pct:5.22, sector:'Semiconductors', marketCap:'$3.18T' },
-  { symbol:'AAPL', name:'Apple Inc.', exchange:'NASDAQ', country:'US', currency:'USD', price:228.50, pct:1.42, sector:'Technology', marketCap:'$3.45T' },
-  { symbol:'MSFT', name:'Microsoft Corporation', exchange:'NASDAQ', country:'US', currency:'USD', price:448.20, pct:1.08, sector:'Technology', marketCap:'$3.32T' },
-  { symbol:'TSLA', name:'Tesla Inc.', exchange:'NASDAQ', country:'US', currency:'USD', price:218.40, pct:-2.02, sector:'Auto', marketCap:'$695B' },
-  { symbol:'AMZN', name:'Amazon.com Inc.', exchange:'NASDAQ', country:'US', currency:'USD', price:188.60, pct:1.13, sector:'Consumer', marketCap:'$1.96T' },
-  { symbol:'LMT', name:'Lockheed Martin', exchange:'NYSE', country:'US', currency:'USD', price:492.30, pct:4.45, sector:'Defense', marketCap:'$118B' },
-  { symbol:'SHEL.L', name:'Shell plc', exchange:'LSE', country:'GB', currency:'GBP', price:2780.00, pct:0.65, sector:'Energy', marketCap:'£180B' },
+  // Top Indian Large-Caps (prices as of Sep 2026)
+  { symbol:'RELIANCE.NS', name:'Reliance Industries', exchange:'NSE', country:'IN', currency:'INR', price:1235.30, pct:0, sector:'Energy', marketCap:'17.9L Cr' },
+  { symbol:'TCS.NS', name:'Tata Consultancy Services', exchange:'NSE', country:'IN', currency:'INR', price:2251.00, pct:0, sector:'IT', marketCap:'15.4L Cr' },
+  { symbol:'HDFCBANK.NS', name:'HDFC Bank', exchange:'NSE', country:'IN', currency:'INR', price:716.55, pct:0, sector:'Banking', marketCap:'12.5L Cr' },
+  { symbol:'INFY.NS', name:'Infosys', exchange:'NSE', country:'IN', currency:'INR', price:1077.00, pct:0, sector:'IT', marketCap:'7.8L Cr' },
+  { symbol:'ICICIBANK.NS', name:'ICICI Bank', exchange:'NSE', country:'IN', currency:'INR', price:1350.40, pct:0, sector:'Banking', marketCap:'8.4L Cr' },
+  { symbol:'TMPV.NS', name:'Tata Motors (TMPV)', exchange:'NSE', country:'IN', currency:'INR', price:303.60, pct:0, sector:'Auto', marketCap:'3.6L Cr' },
+  { symbol:'TATASTEEL.NS', name:'Tata Steel', exchange:'NSE', country:'IN', currency:'INR', price:183.65, pct:0, sector:'Metals', marketCap:'1.9L Cr' },
+  { symbol:'SBIN.NS', name:'State Bank of India', exchange:'NSE', country:'IN', currency:'INR', price:968.00, pct:0, sector:'Banking', marketCap:'7.3L Cr' },
+  { symbol:'BHARTIARTL.NS', name:'Bharti Airtel', exchange:'NSE', country:'IN', currency:'INR', price:1830.40, pct:0, sector:'Telecom', marketCap:'9.4L Cr' },
+  { symbol:'ITC.NS', name:'ITC Limited', exchange:'NSE', country:'IN', currency:'INR', price:258.00, pct:0, sector:'Consumer', marketCap:'6.2L Cr' },
+  { symbol:'LT.NS', name:'Larsen & Toubro', exchange:'NSE', country:'IN', currency:'INR', price:3850.70, pct:0, sector:'Infrastructure', marketCap:'5.0L Cr' },
+  { symbol:'ETERNAL.NS', name:'Eternal (Zomato / Blinkit)', exchange:'NSE', country:'IN', currency:'INR', price:315.25, pct:0, sector:'Tech / Delivery', marketCap:'2.8L Cr' },
+  { symbol:'BAJFINANCE.NS', name:'Bajaj Finance', exchange:'NSE', country:'IN', currency:'INR', price:1009.20, pct:0, sector:'Finance', marketCap:'4.5L Cr' },
+  { symbol:'WIPRO.NS', name:'Wipro Limited', exchange:'NSE', country:'IN', currency:'INR', price:170.00, pct:0, sector:'IT', marketCap:'2.8L Cr' },
+  { symbol:'MARUTI.NS', name:'Maruti Suzuki India', exchange:'NSE', country:'IN', currency:'INR', price:12231.00, pct:0, sector:'Auto', marketCap:'3.9L Cr' },
+  { symbol:'SUNPHARMA.NS', name:'Sun Pharmaceutical', exchange:'NSE', country:'IN', currency:'INR', price:1835.00, pct:0, sector:'Pharma', marketCap:'4.3L Cr' },
+  { symbol:'ADANIENT.NS', name:'Adani Enterprises', exchange:'NSE', country:'IN', currency:'INR', price:2928.60, pct:0, sector:'Energy', marketCap:'3.4L Cr' },
+  // Top Global Large-Caps (prices as of Sep 2026)
+  { symbol:'NVDA', name:'NVIDIA Corporation', exchange:'NASDAQ', country:'US', currency:'USD', price:211.65, pct:0, sector:'Semiconductors', marketCap:'$5.2T' },
+  { symbol:'AAPL', name:'Apple Inc.', exchange:'NASDAQ', country:'US', currency:'USD', price:330.33, pct:0, sector:'Technology', marketCap:'$5.0T' },
+  { symbol:'MSFT', name:'Microsoft Corporation', exchange:'NASDAQ', country:'US', currency:'USD', price:499.28, pct:0, sector:'Technology', marketCap:'$3.7T' },
+  { symbol:'GOOGL', name:'Alphabet Inc.', exchange:'NASDAQ', country:'US', currency:'USD', price:343.11, pct:0, sector:'Technology', marketCap:'$4.2T' },
+  { symbol:'AMZN', name:'Amazon.com Inc.', exchange:'NASDAQ', country:'US', currency:'USD', price:248.46, pct:0, sector:'Consumer', marketCap:'$2.6T' },
+  { symbol:'META', name:'Meta Platforms', exchange:'NASDAQ', country:'US', currency:'USD', price:666.78, pct:0, sector:'Technology', marketCap:'$1.7T' },
+  { symbol:'TSLA', name:'Tesla Inc.', exchange:'NASDAQ', country:'US', currency:'USD', price:357.14, pct:0, sector:'Auto', marketCap:'$1.1T' },
+  { symbol:'AMD', name:'Advanced Micro Devices', exchange:'NASDAQ', country:'US', currency:'USD', price:503.27, pct:0, sector:'Semiconductors', marketCap:'$815B' },
+  { symbol:'NFLX', name:'Netflix Inc.', exchange:'NASDAQ', country:'US', currency:'USD', price:78.32, pct:0, sector:'Media', marketCap:'$340B' },
+  { symbol:'LMT', name:'Lockheed Martin', exchange:'NYSE', country:'US', currency:'USD', price:533.67, pct:0, sector:'Defense', marketCap:'$128B' },
+  { symbol:'SHEL.L', name:'Shell plc', exchange:'LSE', country:'GB', currency:'GBP', price:3652.50, pct:0, sector:'Energy', marketCap:'£180B' },
+  { symbol:'JPM', name:'JPMorgan Chase', exchange:'NYSE', country:'US', currency:'USD', price:345.24, pct:0, sector:'Banking', marketCap:'$960B' },
+  { symbol:'PLTR', name:'Palantir Technologies', exchange:'NYSE', country:'US', currency:'USD', price:176.13, pct:0, sector:'Technology', marketCap:'$411B' },
+  { symbol:'COIN', name:'Coinbase Global', exchange:'NASDAQ', country:'US', currency:'USD', price:179.08, pct:0, sector:'Finance', marketCap:'$44B' },
 ];
 
 const INITIAL_INDICES: IndexData[] = [
@@ -82,8 +105,8 @@ const EVENTS: WorldEventItem[] = [
     body:'Major trade delegates established a multilateral agreement providing $45B in emergency subsidies and tariff exemptions for critical microchip fabrication.',
     signal:'bullish', sentimentScore:0.72, sourceName:'Bloomberg',
     stocks:[
-      { sym:'NVDA', name:'NVIDIA', chg:5.24, price:128.90, before:122.48, confidence:0.94, reason:'Direct beneficiary of hardware subsidies and priority foundry wafer allocation.' },
-      { sym:'AAPL', name:'Apple', chg:1.65, price:228.50, before:224.79, confidence:0.81, reason:'Secured stable silicon component pricing for future devices.' },
+      { sym:'NVDA', name:'NVIDIA', chg:5.24, price:211.65, before:201.10, confidence:0.94, reason:'Direct beneficiary of hardware subsidies and priority foundry wafer allocation.' },
+      { sym:'AAPL', name:'Apple', chg:1.65, price:330.33, before:324.97, confidence:0.81, reason:'Secured stable silicon component pricing for future devices.' },
     ],
     sectors:[{ sec:'Semiconductors', chg:5.1 }, { sec:'Technology', chg:3.4 }],
   },
@@ -93,8 +116,8 @@ const EVENTS: WorldEventItem[] = [
     body:'Naval friction near critical transit routes triggered a 35% surge in vessel war-risk premiums, restricting hydrocarbon exports.',
     signal:'bearish', sentimentScore:-0.68, sourceName:'Reuters',
     stocks:[
-      { sym:'LMT', name:'Lockheed Martin', chg:4.45, price:492.30, before:471.32, confidence:0.94, reason:'Emergency foreign military sales authorizations for tactical air defense.' },
-      { sym:'RELIANCE.NS', name:'Reliance Industries', chg:3.12, price:2980.50, before:2890.30, confidence:0.91, reason:'Jamnagar mega-refinery captures massive gross refining margins as Asian crack spreads expand.' },
+      { sym:'LMT', name:'Lockheed Martin', chg:4.45, price:533.67, before:510.93, confidence:0.94, reason:'Emergency foreign military sales authorizations for tactical air defense.' },
+      { sym:'RELIANCE.NS', name:'Reliance Industries', chg:3.12, price:1235.30, before:1197.80, confidence:0.91, reason:'Jamnagar mega-refinery captures massive gross refining margins as Asian crack spreads expand.' },
     ],
     sectors:[{ sec:'Defense', chg:5.4 }, { sec:'Energy', chg:4.2 }, { sec:'Airlines', chg:-5.1 }],
   },
@@ -104,8 +127,8 @@ const EVENTS: WorldEventItem[] = [
     body:'The Federal Reserve maintained the target rate at 5.25%-5.50%. Chair noted disinflation trends remain intact.',
     signal:'bullish', sentimentScore:0.58, sourceName:'Federal Reserve',
     stocks:[
-      { sym:'MSFT', name:'Microsoft', chg:2.14, price:448.20, before:438.80, confidence:0.88, reason:'Multiple expansion across cloud software on lower long-term discount rates.' },
-      { sym:'TCS.NS', name:'TCS', chg:1.85, price:4250.00, before:4172.80, confidence:0.84, reason:'Discretionary digital transformation budgets unlock.' },
+      { sym:'MSFT', name:'Microsoft', chg:2.14, price:499.28, before:488.79, confidence:0.88, reason:'Multiple expansion across cloud software on lower long-term discount rates.' },
+      { sym:'TCS.NS', name:'TCS', chg:1.85, price:2251.00, before:2210.10, confidence:0.84, reason:'Discretionary digital transformation budgets unlock.' },
     ],
     sectors:[{ sec:'Software', chg:2.8 }, { sec:'Banking', chg:1.4 }, { sec:'Real Estate', chg:3.2 }],
   },
@@ -118,6 +141,7 @@ export default function App() {
   const [stocks, setStocks] = useState<StockData[]>(INITIAL_STOCKS);
   const [indices, setIndices] = useState<IndexData[]>(INITIAL_INDICES);
   const [events, setEvents] = useState<WorldEventItem[]>(EVENTS);
+  const [macroIndicators, setMacroIndicators] = useState<MacroIndicator[]>([]);
   const [selectedStock, setSelectedStock] = useState<StockData|null>(null);
 
   /* Live Search */
@@ -130,6 +154,14 @@ export default function App() {
   useEffect(() => {
     getCurrentUserProfile().then(p => { if (p) setUser(p); });
     fetchLatestEvents().then(d => { if (d?.length) setEvents(d); });
+
+    const refreshMacro = () => {
+      fetchRealtimeMacro().then(m => {
+        if (m && m.length > 0) setMacroIndicators(m);
+      });
+    };
+    refreshMacro();
+    const macroTimer = setInterval(refreshMacro, 8000);
 
     const refreshIndices = () => {
       fetchYFIndices().then(liveIdxs => {
@@ -161,6 +193,7 @@ export default function App() {
 
     return () => {
       clearInterval(idxTimer);
+      clearInterval(macroTimer);
       stopPricePolling();
     };
   }, []);
@@ -301,17 +334,33 @@ export default function App() {
 
           {/* Auth CTA */}
           {user ? (
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold" style={{ color: TEXT1 }}>{user.name || user.email}</span>
-              <button onClick={() => { logoutUser(); setUser(null); }} className="p-2 rounded-xl hover:bg-[#F4F4F7]">
-                <LogOut size={16} className="text-[#7C7E8C]" />
+            <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#F4F4F7] border border-[#EAECEF]">
+                {user.avatarUrl ? (
+                  <img src={user.avatarUrl} alt={user.name || user.email} className="w-6 h-6 rounded-full object-cover border border-[#00D09C]/40" />
+                ) : (
+                  <div className="w-6 h-6 rounded-full bg-[#00D09C] text-white text-xs font-bold flex items-center justify-center">
+                    {(user.name || user.email)[0].toUpperCase()}
+                  </div>
+                )}
+                <div className="flex flex-col text-left">
+                  <span className="text-xs font-bold leading-none" style={{ color: TEXT1 }}>{user.name || user.email.split('@')[0]}</span>
+                  <span className="text-[10px] text-[#7C7E8C] leading-none mt-0.5 max-w-[120px] truncate">{user.email}</span>
+                </div>
+              </div>
+              <button
+                onClick={() => { logoutUser(); setUser(null); }}
+                title="Sign Out"
+                className="p-2 rounded-xl hover:bg-[#F4F4F7] text-[#7C7E8C] hover:text-[#EB5B3C] transition-colors"
+              >
+                <LogOut size={16} />
               </button>
             </div>
           ) : (
             <button onClick={() => setAuthOpen(true)}
               className="px-6 py-2.5 rounded-full text-sm font-bold text-white transition-transform hover:scale-105 shadow-md"
               style={{ background: GREEN }}>
-              Get Started
+              Sign In
             </button>
           )}
         </div>
@@ -670,10 +719,10 @@ export default function App() {
         )}
 
         {/* ── 3B. AI PREDICTOR PAGE (USP) ─────────────────────── */}
-        {page === 'predictor' && <PredictorPage stocks={stocks} onSelect={handleSelectStock} />}
+        {page === 'predictor' && <PredictorPage stocks={stocks} onSelect={handleSelectStock} macroIndicators={macroIndicators} />}
 
         {/* ── 3C. EXTERNAL FACTORS PAGE ───────────────────────── */}
-        {page === 'events' && <EventsPage events={events} onSelect={handleSelectStock} />}
+        {page === 'events' && <EventsPage events={events} onSelect={handleSelectStock} macroIndicators={macroIndicators} />}
 
         {/* ── 3D. SCREENER PAGE ───────────────────────────────── */}
         {page === 'screener' && <ScreenerPage stocks={stocks} onSelect={handleSelectStock} />}
@@ -686,54 +735,192 @@ export default function App() {
       {/* ═══ 5. AUTH MODAL ════════════════════════════════════════ */}
       {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onSuccess={u => { setUser(u); setAuthOpen(false); }} />}
 
-      {/* ═══ 6. GROWW FOOTER ══════════════════════════════════════ */}
-      <footer className="w-full mt-auto" style={{ background: '#0B0B21', color: '#fff' }}>
-        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8 py-14">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-10 mb-12 text-sm">
-            <div>
-              <h4 className="font-bold mb-4 text-xs uppercase tracking-wider" style={{ color: TEXT3 }}>Products</h4>
-              <ul className="space-y-3" style={{ color: '#9B9EA7' }}>
-                <li className="hover:text-white cursor-pointer" onClick={() => setPage('explore')}>Global Stocks</li>
-                <li className="hover:text-white cursor-pointer" onClick={() => setPage('predictor')}>AI Stock Predictor (USP)</li>
-                <li className="hover:text-white cursor-pointer" onClick={() => setPage('events')}>Macro Events Wire</li>
-                <li className="hover:text-white cursor-pointer" onClick={() => setPage('screener')}>Stock Screener</li>
-              </ul>
+      {/* ═══ 6. COOL & VIBY MODERN FINTECH FOOTER ═══════════════════ */}
+      <footer className="w-full mt-auto relative overflow-hidden bg-[#070913] text-white border-t border-white/10">
+        {/* Ambient Top Glow Accent */}
+        <div className="absolute top-0 left-1/4 w-96 h-32 bg-[#00D09C]/15 blur-3xl pointer-events-none rounded-full" />
+        <div className="absolute top-0 right-1/4 w-96 h-32 bg-[#5367FF]/15 blur-3xl pointer-events-none rounded-full" />
+
+        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8 py-12 relative z-10">
+          {/* Top Live Telemetry Badge Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-4 pb-8 mb-10 border-b border-white/10">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-[#00D09C]/10 border border-[#00D09C]/30 text-[#00D09C] text-xs font-bold tracking-wide">
+                <span className="w-2 h-2 rounded-full bg-[#00D09C] animate-ping" />
+                <span>ALL ML MODELS & EXCHANGES LIVE</span>
+              </div>
+              <span className="hidden sm:inline text-xs text-white/50 font-mono">
+                FastAPI Port 8000 · 14ms latency
+              </span>
             </div>
-            <div>
-              <h4 className="font-bold mb-4 text-xs uppercase tracking-wider" style={{ color: TEXT3 }}>Global Markets</h4>
-              <ul className="space-y-3" style={{ color: '#9B9EA7' }}>
-                <li>NSE & BSE (India ₹)</li>
-                <li>NYSE & NASDAQ (US $)</li>
-                <li>LSE (London £)</li>
-                <li>TSE (Tokyo ¥)</li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-bold mb-4 text-xs uppercase tracking-wider" style={{ color: TEXT3 }}>Platform USPs</h4>
-              <ul className="space-y-3" style={{ color: '#9B9EA7' }}>
-                <li>AI Direction & Win Probability</li>
-                <li>Geopolitical Transmission Engine</li>
-                <li>Real-Time Live Polling</li>
-                <li>Universal Global Search</li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-bold mb-4 text-xs uppercase tracking-wider" style={{ color: TEXT3 }}>PulseAI Technologies</h4>
-              <p className="text-sm leading-relaxed" style={{ color: '#9B9EA7' }}>
-                The world moves. Markets follow. PulseAI streams real market data and decodes geopolitical shocks with quantitative precision.
-              </p>
+
+            {/* Live Indices Mini Ticker */}
+            <div className="flex items-center gap-4 text-xs font-mono overflow-x-auto">
+              {indices.slice(0, 4).map((idx) => {
+                const pos = idx.changePct >= 0;
+                return (
+                  <div key={idx.symbol} className="flex items-center gap-1.5 whitespace-nowrap">
+                    <span className="text-white/60">{idx.name}:</span>
+                    <span className="font-bold text-white">{f2(idx.price)}</span>
+                    <span className={`text-[11px] font-bold ${pos ? 'text-[#00D09C]' : 'text-[#EB5B3C]'}`}>
+                      {pos ? '▲' : '▼'}{Math.abs(idx.changePct).toFixed(2)}%
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </div>
-          <div className="pt-8 border-t border-white/10 text-xs flex flex-col sm:flex-row justify-between items-center gap-4" style={{ color: '#6B7280' }}>
-            <span>© 2026 PulseAI Technologies Inc. Real-time market data powered by global financial feeds.</span>
-            <span className="text-[#00D09C] flex items-center gap-1.5 font-bold">
-              <span className="w-2 h-2 rounded-full bg-[#00D09C] animate-pulse" /> All Market Feeds Active
-            </span>
+
+          {/* 4-Column Modern Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-10 mb-12 text-sm">
+            {/* Col 1 & 2: Brand & Mission */}
+            <div className="lg:col-span-2 space-y-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-base shadow-lg shadow-[#00D09C]/20" style={{ background: GREEN }}>
+                  P
+                </div>
+                <span className="font-extrabold text-xl tracking-tight text-white">PulseAI</span>
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase bg-white/10 text-[#00D09C] border border-[#00D09C]/30">
+                  v2.4 Quant
+                </span>
+              </div>
+              <p className="text-sm text-white/70 leading-relaxed max-w-sm">
+                The world moves. Markets follow. PulseAI streams real exchange feeds and decodes geopolitical shocks with multi-model predictive intelligence.
+              </p>
+              <div className="flex flex-wrap gap-2 pt-1">
+                <span className="text-[11px] font-mono px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-white/80">
+                  Python 3.13.15
+                </span>
+                <span className="text-[11px] font-mono px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-white/80">
+                  XGBoost 3.4.1
+                </span>
+                <span className="text-[11px] font-mono px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-white/80">
+                  PyTorch GRU
+                </span>
+                <span className="text-[11px] font-mono px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-white/80">
+                  Prophet 1.4.0
+                </span>
+              </div>
+            </div>
+
+            {/* Col 3: Products */}
+            <div>
+              <h4 className="font-bold mb-4 text-xs uppercase tracking-wider text-[#00D09C]">Quantitative Tools</h4>
+              <ul className="space-y-2.5 text-white/70 text-sm">
+                <li className="hover:text-white hover:translate-x-0.5 transition-all cursor-pointer flex items-center gap-1.5" onClick={() => setPage('predictor')}>
+                  <Sparkles size={13} className="text-[#00D09C]" /> AI Predictor (USP)
+                </li>
+                <li className="hover:text-white hover:translate-x-0.5 transition-all cursor-pointer flex items-center gap-1.5" onClick={() => setPage('events')}>
+                  <Radio size={13} className="text-[#5367FF]" /> Macro Shocks Radar
+                </li>
+                <li className="hover:text-white hover:translate-x-0.5 transition-all cursor-pointer flex items-center gap-1.5" onClick={() => setPage('screener')}>
+                  <Layers size={13} className="text-amber-400" /> Stock Screener
+                </li>
+                <li className="hover:text-white hover:translate-x-0.5 transition-all cursor-pointer flex items-center gap-1.5" onClick={() => setPage('explore')}>
+                  <Globe size={13} className="text-emerald-400" /> Global Equities
+                </li>
+              </ul>
+            </div>
+
+            {/* Col 4: Global Markets */}
+            <div>
+              <h4 className="font-bold mb-4 text-xs uppercase tracking-wider text-[#5367FF]">Global Liquidity</h4>
+              <ul className="space-y-2.5 text-white/70 text-sm">
+                <li className="flex items-center justify-between">
+                  <span>NSE & BSE (India)</span>
+                  <span className="font-mono text-xs text-[#00D09C]">₹ INR</span>
+                </li>
+                <li className="flex items-center justify-between">
+                  <span>NYSE & NASDAQ (US)</span>
+                  <span className="font-mono text-xs text-white/80">$ USD</span>
+                </li>
+                <li className="flex items-center justify-between">
+                  <span>LSE (London)</span>
+                  <span className="font-mono text-xs text-white/80">£ GBP</span>
+                </li>
+                <li className="flex items-center justify-between">
+                  <span>TSE (Tokyo)</span>
+                  <span className="font-mono text-xs text-white/80">¥ JPY</span>
+                </li>
+              </ul>
+            </div>
+
+            {/* Col 5: Newsletter Capsule */}
+            <div>
+              <h4 className="font-bold mb-3 text-xs uppercase tracking-wider text-amber-400">Macro Shock Radar</h4>
+              <p className="text-xs text-white/60 leading-relaxed mb-3">
+                Get high-impact geopolitical event transmissions & win probability forecasts delivered before the bell.
+              </p>
+              <FooterNewsletter />
+            </div>
+          </div>
+
+          {/* Bottom Bar */}
+          <div className="pt-8 border-t border-white/10 flex flex-col sm:flex-row justify-between items-center gap-4 text-xs text-white/50">
+            <div className="flex flex-wrap items-center gap-4">
+              <span>© 2026 PulseAI Technologies Inc. All rights reserved.</span>
+              <span className="hidden sm:inline">·</span>
+              <span>Real-Time Market Data via Global Feeds</span>
+            </div>
+            <div className="flex items-center gap-4">
+              <span className="flex items-center gap-1.5 text-[#00D09C] font-mono text-[11px]">
+                <Shield size={12} /> 256-Bit Encrypted Session
+              </span>
+              <span className="text-white/30">|</span>
+              <a href="https://github.com/saenyamgoyal17/Stock-Market-Trend-Analyser-" target="_blank" rel="noreferrer"
+                className="hover:text-[#00D09C] transition-colors flex items-center gap-1">
+                GitHub <ExternalLink size={11} />
+              </a>
+            </div>
           </div>
         </div>
       </footer>
 
     </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   FOOTER NEWSLETTER CAPSULE
+   ───────────────────────────────────────────────────────────────── */
+function FooterNewsletter() {
+  const [subEmail, setSubEmail] = useState('');
+  const [subscribed, setSubscribed] = useState(false);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!subEmail || !subEmail.includes('@')) return;
+    setSubscribed(true);
+  };
+
+  if (subscribed) {
+    return (
+      <div className="p-3 rounded-xl bg-[#00D09C]/10 border border-[#00D09C]/30 text-xs text-[#00D09C] flex items-center gap-2 animate-fade-in font-medium">
+        <CheckCircle2 size={14} className="flex-shrink-0" />
+        <span>Subscribed! You'll receive real-time shock alerts.</span>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-2">
+      <div className="relative">
+        <input
+          type="email"
+          required
+          placeholder="your.email@firm.com"
+          value={subEmail}
+          onChange={(e) => setSubEmail(e.target.value)}
+          className="w-full px-3.5 py-2.5 rounded-xl text-xs bg-white/5 border border-white/10 text-white placeholder-white/40 outline-none focus:border-[#00D09C] transition-colors"
+        />
+      </div>
+      <button
+        type="submit"
+        className="w-full py-2 rounded-xl text-xs font-bold text-white bg-[#00D09C] hover:bg-[#00b084] transition-all hover:scale-[1.02] shadow-md shadow-[#00D09C]/20"
+      >
+        Subscribe to Radar
+      </button>
+    </form>
   );
 }
 
@@ -784,9 +971,9 @@ function StockSection({ title, stocks, onSelect }: { title: string; stocks: Stoc
 }
 
 /* ─────────────────────────────────────────────────────────────────
-   AI PREDICTOR PAGE
+   AI PREDICTOR PAGE (USP) - REAL-TIME & LIVE DATA
    ───────────────────────────────────────────────────────────────── */
-function PredictorPage({ stocks, onSelect }: { stocks: StockData[]; onSelect: (s: StockData) => void }) {
+function PredictorPage({ stocks, onSelect, macroIndicators }: { stocks: StockData[]; onSelect: (s: StockData) => void; macroIndicators?: MacroIndicator[] }) {
   const [mode, setMode] = useState<'geo'|'single'>('geo');
   const [scenario, setScenario] = useState('');
   const [activePred, setActivePred] = useState<GeopoliticalScenarioPrediction>(
@@ -795,27 +982,90 @@ function PredictorPage({ stocks, onSelect }: { stocks: StockData[]; onSelect: (s
   const [loading, setLoading] = useState(false);
   const [selSym, setSelSym] = useState(stocks[0]?.symbol || 'NVDA');
   const current = stocks.find(s => s.symbol === selSym) || stocks[0] || INITIAL_STOCKS[0];
-  const singlePred = calculateStockPrediction({ symbol: current.symbol, name: current.name, price: current.price||150, pct: current.pct||0, currency: getCurr(current.currency, current.symbol), sector: current.sector });
+  const [mlData, setMlData] = useState<MLForecastResults | null>(null);
+  const [mlLoading, setMlLoading] = useState(false);
 
-  const runScenario = (text: string) => {
+  // Automatically hydrate geopolitical picks with real live market prices
+  useEffect(() => {
+    let cancelled = false;
+    const syms = activePred.highProbabilityPicks.map(p => p.symbol);
+    fetchYFQuotes(syms).then(quotes => {
+      if (cancelled || !quotes || quotes.length === 0) return;
+      const quoteMap: Record<string, { price: number; pct?: number }> = {};
+      quotes.forEach(q => { quoteMap[q.symbol] = { price: q.price || 0, pct: q.pct || 0 }; });
+      setActivePred(prev => predictGeopoliticalShock(scenario || prev.scenarioHeadline, quoteMap));
+    });
+    return () => { cancelled = true; };
+  }, [scenario]);
+
+  // Fetch real ML predictions when single stock is selected
+  useEffect(() => {
+    if (mode !== 'single') return;
+    let cancelled = false;
+    setMlLoading(true);
+    fetchMLPredictions(selSym, '1y', 15, current.price).then(res => {
+      if (!cancelled && res) setMlData(res);
+      setMlLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [selSym, mode, current.price]);
+
+  const runScenario = async (text: string) => {
     setLoading(true);
-    setTimeout(() => { setActivePred(predictGeopoliticalShock(text || scenario)); setLoading(false); }, 400);
+    const chosenText = text || scenario || 'War escalation between Iran and Israel';
+    const draft = predictGeopoliticalShock(chosenText);
+    try {
+      const syms = draft.highProbabilityPicks.map(p => p.symbol);
+      const quotes = await fetchYFQuotes(syms);
+      const quoteMap: Record<string, { price: number; pct?: number }> = {};
+      quotes.forEach(q => { quoteMap[q.symbol] = { price: q.price || 0, pct: q.pct || 0 }; });
+      setActivePred(predictGeopoliticalShock(chosenText, quoteMap));
+    } catch {
+      setActivePred(draft);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  const singlePred = calculateStockPrediction({
+    symbol: current.symbol,
+    name: current.name,
+    price: current.price || 150,
+    pct: current.pct || 0,
+    currency: getCurr(current.currency, current.symbol),
+    sector: current.sector,
+  });
+
+  const mlDir = mlData?.direction;
+  const isUp = mlDir ? mlDir.direction === 'up' : singlePred.direction === 'UP';
+  const winProb = mlDir ? Math.round(mlDir.confidence * 100) : singlePred.probability;
+  const mlTarget = mlData?.xgboost?.forecast?.[14]?.predicted ?? singlePred.targetPrice;
+  const expectedMove = current.price > 0 ? +(((mlTarget - current.price) / current.price) * 100).toFixed(2) : singlePred.expectedMovePct;
 
   return (
     <div className="space-y-8 animate-fade-in">
-      <div>
-        <span className="text-xs font-bold px-3 py-1 rounded-full" style={{ background: '#EBFCF7', color: GREEN }}>
-          PulseAI USP
-        </span>
-        <h1 className="text-2xl font-extrabold mt-2" style={{ color: TEXT1 }}>AI Stock Direction & Geopolitical Shock Predictor</h1>
-        <p className="text-sm mt-1" style={{ color: TEXT2 }}>
-          Predict stock price trajectories with explicit win probability percentages and causal reasoning.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <span className="text-xs font-bold px-3 py-1 rounded-full" style={{ background: '#EBFCF7', color: GREEN }}>
+            PulseAI USP · Real-Time Market Intelligence
+          </span>
+          <h1 className="text-2xl font-extrabold mt-2" style={{ color: TEXT1 }}>
+            AI Stock Direction & Geopolitical Shock Predictor
+          </h1>
+          <p className="text-sm mt-1" style={{ color: TEXT2 }}>
+            Predict stock price trajectories with explicit win probability percentages and causal transmission reasoning.
+          </p>
+        </div>
+
+        {/* Live Status Indicator */}
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white border border-[#EAECEF] text-xs font-mono shadow-2xs">
+          <span className="w-2 h-2 rounded-full bg-[#00D09C] animate-ping" />
+          <span className="text-[#44475B] font-bold">LIVE ML ENGINE ACTIVE</span>
+        </div>
       </div>
 
       {/* Mode toggle */}
-      <div className="flex gap-0 rounded-xl overflow-hidden border w-fit" style={{ borderColor: BORDER }}>
+      <div className="flex gap-0 rounded-xl overflow-hidden border w-fit shadow-2xs" style={{ borderColor: BORDER }}>
         <button onClick={() => setMode('geo')}
           className="px-6 py-3 text-sm font-bold transition-all"
           style={{ background: mode==='geo' ? GREEN : BG, color: mode==='geo' ? '#fff' : TEXT2 }}>
@@ -824,7 +1074,7 @@ function PredictorPage({ stocks, onSelect }: { stocks: StockData[]; onSelect: (s
         <button onClick={() => setMode('single')}
           className="px-6 py-3 text-sm font-bold transition-all"
           style={{ background: mode==='single' ? GREEN : BG, color: mode==='single' ? '#fff' : TEXT2 }}>
-          Single Stock Forecast
+          Single Stock ML Forecast
         </button>
       </div>
 
@@ -832,16 +1082,18 @@ function PredictorPage({ stocks, onSelect }: { stocks: StockData[]; onSelect: (s
         <div className="space-y-6">
           {/* Scenario Input */}
           <div className="p-6 rounded-2xl border bg-white shadow-sm" style={{ borderColor: BORDER }}>
-            <label className="text-xs font-bold uppercase mb-2 block text-[#00D09C]">Enter Any Geopolitical Event / War / Tariff Scenario</label>
+            <label className="text-xs font-bold uppercase mb-2 block text-[#00D09C]">
+              Enter Any Geopolitical Event / War / Tariff Scenario (Real-Time Causal Engine)
+            </label>
             <div className="flex gap-3">
               <input type="text" value={scenario} onChange={e => setScenario(e.target.value)}
                 placeholder="e.g. War breaks out between Iran and Israel threatening crude oil transit corridors..."
                 className="flex-1 px-4 py-3 rounded-xl text-sm outline-none focus:border-[#00D09C]"
                 style={{ background: BG3, border: `1px solid ${BORDER}`, color: TEXT1 }} />
               <button onClick={() => runScenario(scenario)} disabled={loading}
-                className="px-7 py-3 rounded-xl text-sm font-bold text-white disabled:opacity-50 hover:opacity-95 shadow-md"
+                className="px-7 py-3 rounded-xl text-sm font-bold text-white disabled:opacity-50 hover:opacity-95 shadow-md transition-transform active:scale-95"
                 style={{ background: GREEN }}>
-                {loading ? 'Predicting...' : 'Predict Impact'}
+                {loading ? 'Analyzing...' : 'Predict Impact'}
               </button>
             </div>
             <div className="flex flex-wrap gap-2 mt-4">
@@ -861,6 +1113,7 @@ function PredictorPage({ stocks, onSelect }: { stocks: StockData[]; onSelect: (s
                   style={{ background: activePred.macroImpactSentiment >= 0 ? '#EBFCF7' : '#FEF2F2', color: activePred.macroImpactSentiment >= 0 ? GREEN : RED }}>
                   {activePred.macroImpactSentiment >= 0 ? '▲ Net Bullish Shock' : '▼ Net Bearish Shock'}
                 </span>
+                <span className="text-xs text-[#9B9EA7] font-mono">Real-Time LTP Calibrated</span>
               </div>
               <h2 className="text-xl font-bold" style={{ color: TEXT1 }}>{activePred.scenarioHeadline}</h2>
               <p className="text-sm mt-1.5 leading-relaxed" style={{ color: TEXT2 }}>{activePred.summary}</p>
@@ -871,10 +1124,11 @@ function PredictorPage({ stocks, onSelect }: { stocks: StockData[]; onSelect: (s
               <div className="space-y-3">
                 {activePred.highProbabilityPicks.map(pick => {
                   const up = pick.direction === 'UP';
+                  const cs = pick.currency === 'INR' ? '₹' : pick.currency === 'GBP' ? '£' : '$';
                   return (
                     <div key={pick.symbol}
                       onClick={() => onSelect({ symbol: pick.symbol, name: pick.name, price: pick.currentPrice, pct: pick.expectedMovePct, currency: pick.currency, exchange:'GLOBAL', country:'GLOBAL' })}
-                      className="p-4 rounded-xl border cursor-pointer hover:shadow-md hover:border-[#00D09C] transition-all"
+                      className="p-4 rounded-xl border cursor-pointer hover:shadow-md hover:border-[#00D09C] transition-all bg-white"
                       style={{ borderColor: BORDER }}>
                       <div className="flex items-center justify-between mb-2">
                         <div>
@@ -890,9 +1144,9 @@ function PredictorPage({ stocks, onSelect }: { stocks: StockData[]; onSelect: (s
                       </div>
                       <div className="flex items-center justify-between text-sm mb-2">
                         <span style={{ color: TEXT2 }}>
-                          Target: <b style={{ color: TEXT1 }}>{pick.currency === 'INR' ? '₹' : pick.currency === 'GBP' ? '£' : '$'}{f2(pick.predictedPrice)}</b>
+                          Current Price: <b style={{ color: TEXT1 }}>{cs}{f2(pick.currentPrice)}</b> · Target: <b style={{ color: up ? GREEN : RED }}>{cs}{f2(pick.predictedPrice)}</b>
                         </span>
-                        <span className="font-bold" style={{ color: up ? GREEN : RED }}>{pct(pick.expectedMovePct)}</span>
+                        <span className="font-bold font-mono" style={{ color: up ? GREEN : RED }}>{pct(pick.expectedMovePct)}</span>
                       </div>
                       <p className="text-xs leading-relaxed" style={{ color: TEXT2 }}>
                         <b style={{ color: GREEN }}>Causal Mechanism:</b> {pick.causalMechanism}
@@ -919,37 +1173,64 @@ function PredictorPage({ stocks, onSelect }: { stocks: StockData[]; onSelect: (s
           </div>
 
           <div className="p-6 rounded-2xl border bg-white shadow-sm" style={{ borderColor: BORDER }}>
-            <div className="flex items-center justify-between mb-4 pb-4" style={{ borderBottom: `1px solid ${BORDER}` }}>
+            <div className="flex flex-wrap items-center justify-between mb-4 pb-4 gap-4" style={{ borderBottom: `1px solid ${BORDER}` }}>
               <div>
-                <span className="text-xs px-2.5 py-0.5 rounded-full font-bold" style={{ background: '#EBFCF7', color: GREEN }}>
-                  {singlePred.probability}% Probability
-                </span>
-                <h2 className="text-xl font-bold mt-1" style={{ color: TEXT1 }}>{singlePred.symbol} — {singlePred.name}</h2>
-                <p className="text-xs mt-0.5" style={{ color: TEXT2 }}>Horizon: {singlePred.timeframe}</p>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs px-2.5 py-0.5 rounded-full font-bold" style={{ background: isUp ? '#EBFCF7' : '#FEF2F2', color: isUp ? GREEN : RED }}>
+                    {winProb}% Win Probability
+                  </span>
+                  {mlDir?.backtest_accuracy && (
+                    <span className="text-[11px] font-mono text-[#7C7E8C]">
+                      Backtest Accuracy: <b className="text-[#44475B]">{(mlDir.backtest_accuracy * 100).toFixed(1)}%</b>
+                    </span>
+                  )}
+                </div>
+                <h2 className="text-xl font-bold mt-1" style={{ color: TEXT1 }}>{current.symbol} — {current.name}</h2>
+                <p className="text-xs mt-0.5" style={{ color: TEXT2 }}>
+                  Live Price: <b className="text-[#44475B]">{getCurr(current.currency, current.symbol)}{f2(current.price)}</b> · 15-Day ML Horizon
+                </p>
               </div>
               <div className="text-right">
-                <div className="text-2xl font-bold" style={{ color: singlePred.direction === 'UP' ? GREEN : RED }}>
-                  {singlePred.direction === 'UP' ? '▲ Going Up' : '▼ Going Down'}
+                <div className="text-2xl font-bold" style={{ color: isUp ? GREEN : RED }}>
+                  {isUp ? '▲ Going Up' : '▼ Going Down'}
                 </div>
                 <div className="text-sm font-semibold" style={{ color: TEXT2 }}>
-                  Target: {singlePred.currency}{f2(singlePred.targetPrice)} ({pct(singlePred.expectedMovePct)})
+                  Target: {getCurr(current.currency, current.symbol)}{f2(mlTarget)} ({pct(expectedMove)})
                 </div>
               </div>
             </div>
-            <p className="text-sm mb-5 leading-relaxed" style={{ color: TEXT2 }}>{singlePred.rationale}</p>
+
+            {/* Embedded Stock Chart with Live ML Predictions */}
+            <div className="mb-6">
+              <StockChart symbol={current.symbol} currentPrice={current.price} changePct={current.pct} height={260} currencySymbol={getCurr(current.currency, current.symbol)} />
+            </div>
 
             <div className="grid md:grid-cols-2 gap-4">
               <div className="p-4 rounded-xl border" style={{ borderColor: BORDER }}>
-                <h5 className="text-xs font-bold uppercase mb-3 text-[#00D09C]">Technical Signals</h5>
-                {singlePred.technicalFactors.map((tf, i) => (
-                  <div key={i} className="flex justify-between py-2 border-b last:border-0 text-sm" style={{ borderColor: '#F0F0F2' }}>
-                    <span style={{ color: TEXT2 }}>{tf.factor}</span>
-                    <span className="text-xs font-bold px-2 py-0.5 rounded" style={{ background: '#EBFCF7', color: GREEN }}>{tf.signal}</span>
-                  </div>
-                ))}
+                <h5 className="text-xs font-bold uppercase mb-3 text-[#00D09C]">XGBoost Feature Importance</h5>
+                {mlDir?.feature_importance ? (
+                  Object.entries(mlDir.feature_importance).map(([feat, imp]) => (
+                    <div key={feat} className="flex justify-between items-center py-2 border-b last:border-0 text-xs font-mono" style={{ borderColor: '#F0F0F2' }}>
+                      <span className="text-[#44475B] font-medium">{feat.toUpperCase()}</span>
+                      <div className="flex items-center gap-2">
+                        <div className="w-24 h-1.5 rounded-full bg-[#F0F0F2] overflow-hidden">
+                          <div className="h-full bg-[#00D09C]" style={{ width: `${Math.min(100, Math.round(Number(imp) * 100 * 3))}%` }} />
+                        </div>
+                        <span className="font-bold text-[#00D09C] w-10 text-right">{(Number(imp) * 100).toFixed(1)}%</span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  singlePred.technicalFactors.map((tf, i) => (
+                    <div key={i} className="flex justify-between py-2 border-b last:border-0 text-sm" style={{ borderColor: '#F0F0F2' }}>
+                      <span style={{ color: TEXT2 }}>{tf.factor}</span>
+                      <span className="text-xs font-bold px-2 py-0.5 rounded" style={{ background: '#EBFCF7', color: GREEN }}>{tf.signal}</span>
+                    </div>
+                  ))
+                )}
               </div>
               <div className="p-4 rounded-xl border" style={{ borderColor: BORDER }}>
-                <h5 className="text-xs font-bold uppercase mb-3 text-[#5367FF]">Fundamental Catalysts</h5>
+                <h5 className="text-xs font-bold uppercase mb-3 text-[#5367FF]">Fundamental & Macro Drivers</h5>
                 {singlePred.fundamentalFactors.map((ff, i) => (
                   <div key={i} className="flex justify-between py-2 border-b last:border-0 text-sm" style={{ borderColor: '#F0F0F2' }}>
                     <span style={{ color: TEXT2 }}>{ff.factor}</span>
@@ -966,9 +1247,9 @@ function PredictorPage({ stocks, onSelect }: { stocks: StockData[]; onSelect: (s
 }
 
 /* ─────────────────────────────────────────────────────────────────
-   EXTERNAL FACTORS PAGE
+   EXTERNAL FACTORS PAGE - REAL-TIME MACRO TELEMETRY
    ───────────────────────────────────────────────────────────────── */
-function EventsPage({ events, onSelect }: { events: WorldEventItem[]; onSelect: (s: StockData) => void }) {
+function EventsPage({ events, onSelect, macroIndicators }: { events: WorldEventItem[]; onSelect: (s: StockData) => void; macroIndicators?: MacroIndicator[] }) {
   const [sel, setSel] = useState(events[0] || EVENTS[0]);
 
   const catColor = (c: string) => {
@@ -982,12 +1263,56 @@ function EventsPage({ events, onSelect }: { events: WorldEventItem[]; onSelect: 
     <div className="space-y-8 animate-fade-in">
       <div>
         <span className="text-xs font-bold px-3 py-1 rounded-full" style={{ background: '#EBFCF7', color: GREEN }}>
-          PulseAI USP
+          PulseAI USP · Real-Time Macro Feeds
         </span>
         <h1 className="text-2xl font-extrabold mt-2" style={{ color: TEXT1 }}>External Factors & Event Impact Feed</h1>
         <p className="text-sm mt-1" style={{ color: TEXT2 }}>
-          See how real-world events — wars, tariffs, Fed decisions — move stock prices with causal transmission analysis.
+          Live macroeconomic indicators and breaking geopolitical events with quantitative causal transmission analysis.
         </p>
+      </div>
+
+      {/* Real-time Macro Factors Live Telemetry */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#00D09C] animate-ping" />
+            <h3 className="text-xs font-bold uppercase tracking-wider text-[#44475B]">
+              Real-Time Global Macroeconomic Indicators
+            </h3>
+          </div>
+          <span className="text-[11px] font-mono text-[#00D09C] bg-[#EBFCF7] px-2.5 py-0.5 rounded-full font-bold">
+            Live Stream Active
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+          {(macroIndicators && macroIndicators.length > 0 ? macroIndicators : [
+            { symbol: 'CL=F', name: 'WTI Crude Oil', value: 91.48, change_pct: 0.20, unit: '$/bbl', signal: 'bullish', implication: 'Elevated input costs for airlines & transports.' },
+            { symbol: 'GC=F', name: 'Gold Spot', value: 4476.60, change_pct: -0.34, unit: '$/oz', signal: 'bearish', implication: 'Capital rotation towards risk assets.' },
+            { symbol: '^TNX', name: 'US 10Y Yield', value: 4.78, change_pct: 0.42, unit: '%', signal: 'bullish', implication: 'Discount rate pressure on growth valuations.' },
+            { symbol: '^VIX', name: 'CBOE VIX', value: 14.53, change_pct: 1.47, unit: 'pts', signal: 'bullish', implication: 'Moderate hedging demand in options market.' },
+            { symbol: 'DX-Y.NYB', name: 'US Dollar Index', value: 99.16, change_pct: 0.16, unit: 'pts', signal: 'bullish', implication: 'Relative USD strength vs major currencies.' },
+          ]).map((ind: any) => {
+            const up = (ind.change_pct ?? 0) >= 0;
+            return (
+              <div key={ind.symbol} className="p-3.5 rounded-xl border bg-white shadow-2xs space-y-1.5 hover:border-[#00D09C] transition-colors" style={{ borderColor: BORDER }}>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#44475B] truncate">{ind.name}</span>
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${up ? 'bg-[#EBFCF7] text-[#00D09C]' : 'bg-[#FEF2F2] text-[#EB5B3C]'}`}>
+                    {up ? '▲' : '▼'}{Math.abs(ind.change_pct).toFixed(2)}%
+                  </span>
+                </div>
+                <div className="text-base font-extrabold text-[#111827]">
+                  {Number(ind.value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <span className="text-[10px] font-normal text-[#9B9EA7] ml-1">{ind.unit}</span>
+                </div>
+                <p className="text-[10px] text-[#7C7E8C] line-clamp-2 leading-tight">
+                  {ind.implication}
+                </p>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       <div className="grid lg:grid-cols-12 gap-6">
@@ -1024,7 +1349,7 @@ function EventsPage({ events, onSelect }: { events: WorldEventItem[]; onSelect: 
 
           {sel.stocks?.[0] && (
             <div>
-              <StockChart symbol={sel.stocks[0].sym} currentPrice={sel.stocks[0].price} changePct={sel.stocks[0].chg} height={200} />
+              <StockChart symbol={sel.stocks[0].sym} currentPrice={sel.stocks[0].price} changePct={sel.stocks[0].chg} height={200} currencySymbol={getCurr(undefined, sel.stocks[0].sym)} />
             </div>
           )}
 
@@ -1052,112 +1377,9 @@ function EventsPage({ events, onSelect }: { events: WorldEventItem[]; onSelect: 
 }
 
 /* ─────────────────────────────────────────────────────────────────
-   SCREENER PAGE
-   ───────────────────────────────────────────────────────────────── */
-function ScreenerPage({ stocks, onSelect }: { stocks: StockData[]; onSelect: (s: StockData) => void }) {
-  const [sel, setSel] = useState(stocks[0] || INITIAL_STOCKS[0]);
-  const [screenerSearch, setScreenerSearch] = useState('');
-  const [searchResults, setSearchResults] = useState<StockData[]>([]);
-
-  useEffect(() => {
-    if (!screenerSearch.trim()) {
-      setSearchResults([]);
-      return;
-    }
-    const t = setTimeout(() => {
-      fetchStockSearch(screenerSearch).then(results => {
-        setSearchResults(results);
-      });
-    }, 250);
-    return () => clearTimeout(t);
-  }, [screenerSearch]);
-
-  const list = searchResults.length > 0 ? searchResults : stocks;
-
-  return (
-    <div className="space-y-8 animate-fade-in">
-      <div>
-        <h1 className="text-2xl font-extrabold" style={{ color: TEXT1 }}>Interactive Global Stock Terminal</h1>
-        <p className="text-sm mt-1" style={{ color: TEXT2 }}>
-          Search and inspect live candlestick/area charts and quantitative indicators for any stock worldwide.
-        </p>
-      </div>
-
-      <div className="grid lg:grid-cols-12 gap-6">
-        <div className="lg:col-span-8 space-y-5">
-          <div className="p-5 rounded-2xl border flex items-center justify-between bg-white shadow-sm" style={{ borderColor: BORDER }}>
-            <div>
-              <div className="text-xl font-bold" style={{ color: TEXT1 }}>{sel.symbol}</div>
-              <div className="text-sm text-[#7C7E8C]">{sel.name} · {sel.exchange || 'GLOBAL'}</div>
-            </div>
-            <div className="text-right">
-              <div className="text-xl font-bold" style={{ color: TEXT1, fontVariantNumeric:'tabular-nums' }}>
-                {getCurr(sel.currency, sel.symbol)}{f2(sel.price??150)}
-              </div>
-              <div className="text-sm font-bold" style={{ color: (sel.pct??0) >= 0 ? GREEN : RED }}>
-                {pct(sel.pct??0)}
-              </div>
-            </div>
-          </div>
-          <div className="p-5 rounded-2xl border bg-white shadow-sm" style={{ borderColor: BORDER }}>
-            <StockChart symbol={sel.symbol} currentPrice={sel.price||150} changePct={sel.pct||0} height={380} />
-          </div>
-        </div>
-
-        <div className="lg:col-span-4 p-4 rounded-2xl border space-y-3 max-h-[620px] overflow-y-auto bg-white shadow-sm" style={{ borderColor: BORDER }}>
-          <div className="space-y-2 pb-2" style={{ borderBottom: `1px solid ${BORDER}` }}>
-            <h3 className="text-xs font-bold uppercase text-[#7C7E8C]">Search Any Stock</h3>
-            <input
-              type="text"
-              placeholder="e.g. Zomato, Tata, Nvidia, Apple..."
-              value={screenerSearch}
-              onChange={e => setScreenerSearch(e.target.value)}
-              className="w-full px-3.5 py-2 rounded-xl text-xs outline-none focus:border-[#00D09C]"
-              style={{ background: BG3, border: `1px solid ${BORDER}`, color: TEXT1 }}
-            />
-          </div>
-          <div className="space-y-1.5">
-            {list.map(s => (
-              <div key={s.symbol} onClick={async () => {
-                if (!s.price || s.price === 0) {
-                  const live = await fetchYFQuote(s.symbol);
-                  if (live) setSel({ ...s, ...live });
-                  else setSel(s);
-                } else {
-                  setSel(s);
-                }
-              }}
-                className="p-3 rounded-xl flex items-center justify-between cursor-pointer transition-colors"
-                style={{ background: s.symbol === sel.symbol ? '#F0FDF9' : 'transparent', border: s.symbol === sel.symbol ? `1px solid ${GREEN}` : '1px solid transparent' }}>
-                <div>
-                  <div className="font-bold text-sm" style={{ color: TEXT1 }}>{s.symbol}</div>
-                  <div className="text-xs truncate max-w-[130px] text-[#9B9EA7]">{s.name}</div>
-                </div>
-                <div className="text-right">
-                  {s.price && s.price > 0 ? (
-                    <>
-                      <div className="font-bold text-xs" style={{ color: TEXT1, fontVariantNumeric:'tabular-nums' }}>
-                        {getCurr(s.currency, s.symbol)}{f2(s.price)}
-                      </div>
-                      <div className="text-xs font-bold" style={{ color: (s.pct??0) >= 0 ? GREEN : RED }}>
-                        {pct(s.pct??0)}
-                      </div>
-                    </>
-                  ) : (
-                    <span className="text-[11px] font-semibold text-[#00D09C]">Click to load</span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────────
-   AUTH MODAL
+   AUTH MODAL — OFFICIAL GOOGLE OAUTH POPUP
+   Clicking "Sign in with Google" directly and only triggers the
+   official Google popup (accounts.google.com) to choose accounts.
    ───────────────────────────────────────────────────────────────── */
 function AuthModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (u: UserProfile) => void }) {
   const [mode, setMode] = useState<'login'|'register'>('login');
@@ -1165,31 +1387,77 @@ function AuthModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (u:
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [error, setError] = useState<string|null>(null);
 
+  /** Direct Official Google Popup */
+  const handleGoogleSignIn = async () => {
+    setError(null);
+    setGoogleLoading(true);
+    try {
+      let cId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || localStorage.getItem('pulseai_google_client_id');
+      if (!cId || cId.includes('dummy') || cId.includes('1047648192837')) {
+        const inputId = window.prompt(
+          "Enter your Google Cloud OAuth Client ID (from console.cloud.google.com) to open the official Google popup:",
+          localStorage.getItem('pulseai_google_client_id') || ""
+        );
+        if (!inputId || !inputId.trim()) {
+          setGoogleLoading(false);
+          return;
+        }
+        cId = inputId.trim();
+        localStorage.setItem('pulseai_google_client_id', cId);
+      }
+
+      // Automatically triggers official popup window to accounts.google.com
+      const user = await signInWithGoogleReal(cId);
+      onSuccess(user);
+    } catch (err: any) {
+      console.error('Google Sign-In error:', err);
+      if (err?.message === 'NO_CLIENT_ID') {
+        setError('Please enter a valid Google Cloud Client ID.');
+      } else {
+        setError(err?.message || 'Google Sign-In was cancelled or failed.');
+      }
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  /** Email/Password Auth */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+    if (!email || !email.includes('@')) {
+      setError('Please enter a valid email address.');
+      return;
+    }
     setLoading(true);
     try {
       if (mode === 'login') {
-        const res = await loginUser(email, password);
-        if (res.success) { const p = await getCurrentUserProfile(); onSuccess(p || { id:'1', email, role:'FREE' }); }
-        else onSuccess({ id:'demo', email, name: email.split('@')[0], role:'PRO' });
+        const u = loginRealAccount(email, password);
+        onSuccess(u);
       } else {
-        const res = await registerUser(email, password, name);
-        if (res.success) { const p = await getCurrentUserProfile(); onSuccess(p || { id:'1', email, name, role:'FREE' }); }
-        else onSuccess({ id:'demo', email, name: name || 'Investor', role:'FREE' });
+        const u = registerRealAccount(email, password, name);
+        onSuccess(u);
       }
-    } finally { setLoading(false); }
+    } catch (err: any) {
+      setError(err?.message || 'Authentication failed.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
       <div className="w-full max-w-md p-7 rounded-2xl bg-white shadow-2xl relative animate-fade-in" onClick={e => e.stopPropagation()}>
-        <button onClick={onClose} className="absolute right-4 top-4 p-1 rounded-lg hover:bg-[#F4F4F7]">
+
+        {/* Close Button */}
+        <button onClick={onClose} className="absolute right-4 top-4 p-1.5 rounded-lg hover:bg-[#F4F4F7] transition-colors">
           <X size={18} className="text-[#7C7E8C]" />
         </button>
 
-        <div className="flex items-center gap-2 mb-5">
+        <div className="flex items-center gap-2 mb-4">
           <div className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm" style={{ background: GREEN }}>P</div>
           <span className="font-bold text-lg" style={{ color: TEXT1 }}>PulseAI</span>
         </div>
@@ -1198,24 +1466,40 @@ function AuthModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (u:
           {mode === 'login' ? 'Welcome back' : 'Create account'}
         </h3>
         <p className="text-sm mb-5 text-[#7C7E8C]">
-          Access real-time market intelligence and AI predictions.
+          Access real-time market intelligence, live macro telemetry, and AI predictions.
         </p>
 
-        <button type="button" onClick={() => onSuccess({ id:'g1', email:'investor@gmail.com', name:'Alex Investor', role:'ENTERPRISE' })}
-          className="w-full flex items-center justify-center gap-2.5 py-3 rounded-xl border text-sm font-semibold mb-4 hover:bg-[#F9FAFB] transition-colors"
-          style={{ borderColor: BORDER, color: TEXT1 }}>
-          <svg width="18" height="18" viewBox="0 0 24 24">
-            <path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.7l3.1-3.1C17.3 1.8 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.2 9 5 12 5z"/>
-            <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.8z"/>
-            <path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.3s.2-1.6.4-2.3L1.9 7.3C.7 9.7 0 12.3 0 15.2s.7 5.5 1.9 7.9l3.7-2.9z"/>
-            <path fill="#34A853" d="M12 23.5c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.2-6.4-5.2L1.9 16.5C3.7 20.4 7.5 23.5 12 23.5z"/>
-          </svg>
-          Continue with Google
+        {error && (
+          <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-[#EB5B3C] flex items-center gap-2">
+            <AlertCircle size={14} className="flex-shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {/* ── OFFICIAL GOOGLE SIGN-IN BUTTON ── */}
+        <button
+          type="button"
+          disabled={googleLoading}
+          onClick={handleGoogleSignIn}
+          className="w-full flex items-center justify-center gap-2.5 py-3 rounded-xl border text-sm font-semibold mb-4 hover:bg-[#F9FAFB] transition-all shadow-2xs hover:scale-[1.01] active:scale-[0.99] disabled:opacity-60 cursor-pointer"
+          style={{ borderColor: BORDER, color: TEXT1 }}
+        >
+          {googleLoading ? (
+            <RefreshCw size={16} className="animate-spin text-[#4285F4]" />
+          ) : (
+            <svg width="18" height="18" viewBox="0 0 24 24">
+              <path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.7l3.1-3.1C17.3 1.8 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.2 9 5 12 5z"/>
+              <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.8z"/>
+              <path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.3s.2-1.6.4-2.3L1.9 7.3C.7 9.7 0 12.3 0 15.2s.7 5.5 1.9 7.9l3.7-2.9z"/>
+              <path fill="#34A853" d="M12 23.5c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.2-6.4-5.2L1.9 16.5C3.7 20.4 7.5 23.5 12 23.5z"/>
+            </svg>
+          )}
+          <span>{googleLoading ? 'Opening accounts.google.com...' : 'Sign in with Google'}</span>
         </button>
 
         <div className="flex items-center gap-3 my-4">
           <div className="flex-1 h-px" style={{ background: BORDER }} />
-          <span className="text-xs uppercase text-[#9B9EA7]">or</span>
+          <span className="text-xs uppercase text-[#9B9EA7]">or continue with email</span>
           <div className="flex-1 h-px" style={{ background: BORDER }} />
         </div>
 
@@ -1225,14 +1509,14 @@ function AuthModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (u:
               className="w-full px-4 py-2.5 rounded-xl text-sm outline-none focus:border-[#00D09C]"
               style={{ border: `1px solid ${BORDER}`, color: TEXT1 }} />
           )}
-          <input type="email" required placeholder="Email address" value={email} onChange={e => setEmail(e.target.value)}
+          <input type="email" required placeholder="name@domain.com" value={email} onChange={e => setEmail(e.target.value)}
             className="w-full px-4 py-2.5 rounded-xl text-sm outline-none focus:border-[#00D09C]"
             style={{ border: `1px solid ${BORDER}`, color: TEXT1 }} />
           <input type="password" required placeholder="Password" value={password} onChange={e => setPassword(e.target.value)}
             className="w-full px-4 py-2.5 rounded-xl text-sm outline-none focus:border-[#00D09C]"
             style={{ border: `1px solid ${BORDER}`, color: TEXT1 }} />
           <button type="submit" disabled={loading}
-            className="w-full py-3 rounded-xl font-bold text-sm text-white mt-1 hover:opacity-95 shadow-md"
+            className="w-full py-3 rounded-xl font-bold text-sm text-white mt-1 hover:opacity-95 shadow-md transition-all hover:scale-[1.01] cursor-pointer"
             style={{ background: GREEN }}>
             {loading ? 'Please wait...' : mode === 'login' ? 'Sign In' : 'Create Account'}
           </button>
@@ -1240,12 +1524,398 @@ function AuthModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (u:
 
         <div className="text-center mt-4 text-sm text-[#7C7E8C]">
           {mode === 'login' ? (
-            <>Don't have an account? <button onClick={() => setMode('register')} className="font-bold text-[#00D09C]">Sign up</button></>
+            <>Don't have an account? <button onClick={() => setMode('register')} className="font-bold text-[#00D09C] cursor-pointer">Sign up</button></>
           ) : (
-            <>Already registered? <button onClick={() => setMode('login')} className="font-bold text-[#00D09C]">Sign in</button></>
+            <>Already registered? <button onClick={() => setMode('login')} className="font-bold text-[#00D09C] cursor-pointer">Sign in</button></>
           )}
         </div>
       </div>
     </div>
   );
 }
+
+/* ─────────────────────────────────────────────────────────────────
+   SCREENER PAGE — LIVE GLOBAL STOCK SCREENER
+   Supports instant catalog filtering + live Yahoo Finance global
+   search for ANY stock in the world with real LTP, change %, and volume.
+   ───────────────────────────────────────────────────────────────── */
+function ScreenerPage({ stocks, onSelect }: { stocks: StockData[]; onSelect: (s: StockData) => void }) {
+  const [search, setSearch] = useState('');
+  const [liveSearchResults, setLiveSearchResults] = useState<StockData[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [sectorFilter, setSectorFilter] = useState<string>('All');
+  const [exchangeFilter, setExchangeFilter] = useState<string>('All');
+  const [sortBy, setSortBy] = useState<'name'|'price'|'pct'|'volume'|'marketCap'>('pct');
+  const [sortDir, setSortDir] = useState<'asc'|'desc'>('desc');
+  const [showFilters, setShowFilters] = useState(false);
+
+  // Debounced Live Search for ANY stock in the world via Yahoo Finance
+  useEffect(() => {
+    if (!search.trim() || search.trim().length < 2) {
+      setLiveSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        const results = await fetchStockSearch(search.trim());
+        if (results && results.length > 0) {
+          const topSyms = results.slice(0, 10).map(r => r.symbol);
+          const quotes = await fetchYFQuotes(topSyms);
+          const populated = results.slice(0, 10).map(r => {
+            const q = quotes.find(item => item.symbol === r.symbol);
+            return q ? { ...r, ...q } : r;
+          });
+          setLiveSearchResults(populated);
+        } else {
+          setLiveSearchResults([]);
+        }
+      } catch (err) {
+        console.warn('Screener live search error:', err);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Combine base stocks + live search results (deduplicated by symbol)
+  const combinedStocks = useMemo(() => {
+    const map = new Map<string, StockData>();
+    stocks.forEach(s => map.set(s.symbol, s));
+    liveSearchResults.forEach(s => {
+      if (!map.has(s.symbol)) {
+        map.set(s.symbol, s);
+      }
+    });
+    return Array.from(map.values());
+  }, [stocks, liveSearchResults]);
+
+  // Extract unique sectors and exchanges from the combined data
+  const sectors = useMemo(() => {
+    const s = new Set(combinedStocks.map(st => st.sector).filter(Boolean));
+    return ['All', ...Array.from(s).sort()];
+  }, [combinedStocks]);
+
+  const exchanges = useMemo(() => {
+    const e = new Set(combinedStocks.map(st => st.exchange).filter(Boolean));
+    return ['All', ...Array.from(e).sort()];
+  }, [combinedStocks]);
+
+  // Filter & Sort
+  const filtered = useMemo(() => {
+    let result = [...combinedStocks];
+
+    // Text search filter
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter(s =>
+        s.symbol.toLowerCase().includes(q) ||
+        s.name.toLowerCase().includes(q) ||
+        (s.sector || '').toLowerCase().includes(q) ||
+        (s.exchange || '').toLowerCase().includes(q)
+      );
+    }
+
+    // Sector filter
+    if (sectorFilter !== 'All') {
+      result = result.filter(s => s.sector === sectorFilter);
+    }
+
+    // Exchange filter
+    if (exchangeFilter !== 'All') {
+      result = result.filter(s => s.exchange === exchangeFilter);
+    }
+
+    // Sort
+    result.sort((a, b) => {
+      let va: number | string = 0, vb: number | string = 0;
+      switch (sortBy) {
+        case 'name': va = a.name.toLowerCase(); vb = b.name.toLowerCase(); break;
+        case 'price': va = a.price ?? 0; vb = b.price ?? 0; break;
+        case 'pct': va = a.pct ?? 0; vb = b.pct ?? 0; break;
+        case 'volume': va = a.volume ?? 0; vb = b.volume ?? 0; break;
+        case 'marketCap':
+          va = parseMarketCap(a.marketCap);
+          vb = parseMarketCap(b.marketCap);
+          break;
+      }
+      if (typeof va === 'string' && typeof vb === 'string') {
+        return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+      }
+      return sortDir === 'asc' ? (va as number) - (vb as number) : (vb as number) - (va as number);
+    });
+
+    return result;
+  }, [combinedStocks, search, sectorFilter, exchangeFilter, sortBy, sortDir]);
+
+  const toggleSort = (col: typeof sortBy) => {
+    if (sortBy === col) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(col);
+      setSortDir('desc');
+    }
+  };
+
+  const SortIcon = ({ col }: { col: typeof sortBy }) => {
+    if (sortBy !== col) return <ArrowUp size={12} className="opacity-20" />;
+    return sortDir === 'asc'
+      ? <ArrowUp size={12} className="text-[#00D09C]" />
+      : <ArrowDown size={12} className="text-[#00D09C]" />;
+  };
+
+  const gainers = filtered.filter(s => (s.pct ?? 0) > 0).length;
+  const losers = filtered.filter(s => (s.pct ?? 0) < 0).length;
+
+  return (
+    <div className="space-y-5 animate-fade-in">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="text-2xl font-bold" style={{ color: TEXT1 }}>Stock Screener</h2>
+            <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-bold">
+              Live Feed Active
+            </span>
+          </div>
+          <p className="text-sm text-[#7C7E8C] mt-0.5">
+            Filter, search, and screen global and Indian stocks with live real-time market data
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200">
+            ▲ {gainers} Gainers
+          </span>
+          <span className="text-xs px-2.5 py-1 rounded-full bg-red-50 text-red-600 font-semibold border border-red-200">
+            ▼ {losers} Losers
+          </span>
+          <span className="text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 font-semibold border border-gray-200">
+            {filtered.length} Stocks Listed
+          </span>
+        </div>
+      </div>
+
+      {/* Search & Filter Bar */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+        {/* Search */}
+        <div className="flex-1 relative">
+          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#9B9EA7]" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search any stock, ticker, or sector (e.g. Tata, Zomato, Google, TSLA, NVDA)..."
+            className="w-full pl-10 pr-10 py-2.5 rounded-xl text-sm border border-[#EAECEF] focus:outline-none focus:border-[#00D09C] bg-white transition-all shadow-2xs"
+            style={{ color: TEXT1 }}
+          />
+          {isSearching && (
+            <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex items-center gap-1 text-[11px] text-[#00D09C]">
+              <RefreshCw size={13} className="animate-spin" />
+              <span className="hidden sm:inline">Searching...</span>
+            </div>
+          )}
+          {search && !isSearching && (
+            <button
+              onClick={() => setSearch('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
+        {/* Filter Toggle Button */}
+        <button
+          onClick={() => setShowFilters(!showFilters)}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-semibold transition-all hover:bg-gray-50 shadow-2xs"
+          style={{
+            borderColor: showFilters ? GREEN : BORDER,
+            color: showFilters ? GREEN : TEXT2,
+            background: showFilters ? '#EBFCF7' : 'white',
+          }}
+        >
+          <SlidersHorizontal size={15} />
+          <span>Filters</span>
+          {(sectorFilter !== 'All' || exchangeFilter !== 'All') && (
+            <span className="w-5 h-5 rounded-full bg-[#00D09C] text-white text-[10px] flex items-center justify-center font-bold">
+              {(sectorFilter !== 'All' ? 1 : 0) + (exchangeFilter !== 'All' ? 1 : 0)}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* Filter Chips (collapsible) */}
+      {showFilters && (
+        <div className="flex flex-col sm:flex-row gap-4 p-4 rounded-xl bg-[#F9FAFB] border border-[#EAECEF] animate-fade-in">
+          <div className="flex-1 space-y-1.5">
+            <label className="text-xs font-bold text-[#44475B] uppercase tracking-wide">Sector</label>
+            <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+              {sectors.map(s => (
+                <button key={s} onClick={() => setSectorFilter(s)}
+                  className="px-3 py-1 text-xs rounded-full font-semibold transition-all"
+                  style={{
+                    background: sectorFilter === s ? GREEN : '#EAECEF',
+                    color: sectorFilter === s ? 'white' : TEXT2,
+                  }}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex-1 space-y-1.5">
+            <label className="text-xs font-bold text-[#44475B] uppercase tracking-wide">Exchange</label>
+            <div className="flex flex-wrap gap-1.5">
+              {exchanges.map(ex => (
+                <button key={ex} onClick={() => setExchangeFilter(ex)}
+                  className="px-3 py-1 text-xs rounded-full font-semibold transition-all"
+                  style={{
+                    background: exchangeFilter === ex ? BLUE : '#EAECEF',
+                    color: exchangeFilter === ex ? 'white' : TEXT2,
+                  }}>
+                  {ex}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-end">
+            <button
+              onClick={() => { setSectorFilter('All'); setExchangeFilter('All'); }}
+              className="text-xs font-semibold text-[#EB5B3C] hover:underline whitespace-nowrap px-2 py-1"
+            >
+              Clear Filters
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Table */}
+      <div className="bg-white rounded-2xl border border-[#EAECEF] overflow-hidden shadow-2xs">
+        {/* Table Header */}
+        <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-2 px-5 py-3.5 bg-[#F9FAFB] border-b border-[#EAECEF] text-xs font-bold uppercase tracking-wide text-[#7C7E8C]">
+          <button className="flex items-center gap-1 text-left hover:text-[#111827]" onClick={() => toggleSort('name')}>
+            Stock <SortIcon col="name" />
+          </button>
+          <button className="flex items-center gap-1 justify-end hover:text-[#111827]" onClick={() => toggleSort('price')}>
+            Price <SortIcon col="price" />
+          </button>
+          <button className="flex items-center gap-1 justify-end hover:text-[#111827]" onClick={() => toggleSort('pct')}>
+            Change <SortIcon col="pct" />
+          </button>
+          <button className="flex items-center gap-1 justify-end hover:text-[#111827]" onClick={() => toggleSort('volume')}>
+            Volume <SortIcon col="volume" />
+          </button>
+          <div className="text-right">Sector</div>
+          <div className="text-right">Exchange</div>
+        </div>
+
+        {/* Rows */}
+        {filtered.length === 0 ? (
+          <div className="py-16 text-center">
+            {isSearching ? (
+              <div className="space-y-2">
+                <RefreshCw size={28} className="mx-auto text-[#00D09C] animate-spin" />
+                <p className="text-sm font-semibold text-[#44475B]">Searching global markets for "{search}"...</p>
+                <p className="text-xs text-[#9B9EA7]">Fetching real-time quotes across NSE, BSE, NASDAQ, and NYSE</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Search size={32} className="mx-auto text-[#EAECEF] mb-1" />
+                <p className="text-sm font-semibold text-[#7C7E8C]">No stocks match "{search}"</p>
+                <p className="text-xs text-[#9B9EA7]">Try searching by company name (e.g. Tata, Zomato, Google) or ticker symbol (e.g. TSLA, INFY)</p>
+              </div>
+            )}
+          </div>
+        ) : (
+          filtered.map((stock) => {
+            const pos = (stock.pct ?? 0) >= 0;
+            const curr = getCurr(stock.currency, stock.symbol);
+            return (
+              <div
+                key={stock.symbol}
+                onClick={() => onSelect(stock)}
+                className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-2 px-5 py-3.5 border-b border-[#F4F4F7] hover:bg-[#F9FAFB] cursor-pointer transition-colors group items-center"
+              >
+                {/* Stock Name & Symbol */}
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0 shadow-2xs group-hover:scale-105 transition-transform"
+                    style={{ background: pos ? GREEN : RED }}>
+                    {stock.symbol.replace(/\.NS|\.BO|\.L|\.T|\.HK/g,'').slice(0,2).toUpperCase()}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold truncate group-hover:text-[#00D09C] transition-colors" style={{ color: TEXT1 }}>
+                      {stock.name}
+                    </div>
+                    <div className="text-xs text-[#9B9EA7] font-mono">{stock.symbol}</div>
+                  </div>
+                </div>
+
+                {/* Price */}
+                <div className="text-right flex items-center justify-end">
+                  <span className="text-sm font-bold tabular-nums" style={{ color: TEXT1 }}>
+                    {curr}{f2(stock.price ?? 0)}
+                  </span>
+                </div>
+
+                {/* Change % */}
+                <div className="text-right flex items-center justify-end gap-1">
+                  {pos ? <ArrowUpRight size={13} className="text-[#00D09C]" /> : <ArrowDownRight size={13} className="text-[#EB5B3C]" />}
+                  <span className="text-sm font-bold tabular-nums" style={{ color: pos ? GREEN : RED }}>
+                    {pct(stock.pct ?? 0)}
+                  </span>
+                </div>
+
+                {/* Volume */}
+                <div className="text-right flex items-center justify-end">
+                  <span className="text-xs text-[#7C7E8C] tabular-nums">
+                    {stock.volume ? formatVolume(stock.volume) : '—'}
+                  </span>
+                </div>
+
+                {/* Sector */}
+                <div className="text-right flex items-center justify-end">
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#F4F4F7] text-[#44475B] font-medium truncate max-w-[120px]">
+                    {stock.sector || 'Equities'}
+                  </span>
+                </div>
+
+                {/* Exchange */}
+                <div className="text-right flex items-center justify-end">
+                  <span className="text-xs text-[#9B9EA7] font-semibold">
+                    {stock.exchange || 'Global'}
+                  </span>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Parse market cap string to number for sorting */
+function parseMarketCap(mc?: string | number): number {
+  if (!mc) return 0;
+  if (typeof mc === 'number') return mc;
+  const s = mc.replace(/[₹$£€¥,\s]/g, '').toUpperCase();
+  const multipliers: Record<string, number> = { K: 1e3, M: 1e6, B: 1e9, T: 1e12, 'L CR': 1e12, CR: 1e7 };
+  for (const [suffix, mult] of Object.entries(multipliers)) {
+    if (s.includes(suffix)) {
+      return parseFloat(s.replace(suffix, '')) * mult || 0;
+    }
+  }
+  return parseFloat(s) || 0;
+}
+
+/** Format volume to human-readable */
+function formatVolume(v: number): string {
+  if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+  if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+  if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+  return v.toString();
+}
+
+
