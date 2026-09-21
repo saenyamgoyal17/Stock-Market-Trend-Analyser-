@@ -89,12 +89,9 @@ export interface MLDirectionPrediction {
 export interface MLForecastResults {
   ticker?: string;
   currency_symbol?: string;
-  xgboost?: MLModelForecast;
-  lightgbm?: MLModelForecast;
-  catboost?: MLModelForecast;
-  arima?: MLModelForecast;
-  prophet?: MLModelForecast;
-  lstm?: MLModelForecast;
+  xgboost?: MLModelForecast;     // Primary: XGBoost with 9 technical indicators
+  lightgbm?: MLModelForecast;    // Secondary: LightGBM with 9 technical indicators
+  ensemble?: MLModelForecast;    // Recommended: XGBoost + LightGBM averaged (best accuracy)
   direction?: MLDirectionPrediction;
 }
 
@@ -191,7 +188,7 @@ export async function fetchMLPredictions(
     const res = await fetch(`${ML_API_BASE}/predict/${encodeURIComponent(ticker)}?period=${period}&horizon=${horizon}`);
     if (res.ok) {
       const data = await res.json();
-      if (data && (data.xgboost?.forecast?.length || data.arima?.forecast?.length)) {
+      if (data && (data.xgboost?.forecast?.length || data.ensemble?.forecast?.length)) {
         return data;
       }
     }
@@ -604,13 +601,28 @@ function generateFallbackMLPredictions(symbol: string, horizon = 15, currentPric
     return { model: modelName, forecast };
   };
 
+  // Build xgboost and lightgbm curves, then derive ensemble from them
+  const xgboostFc = generateCurve('XGBoost', 0.038, 0.6);
+  const lightgbmFc = generateCurve('LightGBM', 0.035, 0.55);
+
+  // Ensemble: average of xgboost + lightgbm predictions
+  const ensembleForecast: MLForecastPoint[] = xgboostFc.forecast.map((xp, i) => {
+    const lp = lightgbmFc.forecast[i];
+    const avgPred = (xp.predicted + lp.predicted) / 2;
+    return {
+      date: xp.date,
+      predicted: +avgPred.toFixed(2),
+      lower: +((xp.lower! + lp.lower!) / 2).toFixed(2),
+      upper: +((xp.upper! + lp.upper!) / 2).toFixed(2),
+    };
+  });
+
   return {
     ticker: symbol,
     currency_symbol: isIndian ? '₹' : '$',
-    xgboost: generateCurve('XGBoost', 0.038, 0.6),
-    arima: generateCurve('ARIMA', 0.021, 0.4),
-    prophet: generateCurve('Prophet', 0.029, 0.5),
-    lstm: generateCurve('LSTM', 0.042, 0.7),
+    xgboost: xgboostFc,
+    lightgbm: lightgbmFc,
+    ensemble: { model: 'Ensemble (XGBoost + LightGBM)', forecast: ensembleForecast },
     direction: {
       model: 'XGBoost Classifier',
       direction: 'up',

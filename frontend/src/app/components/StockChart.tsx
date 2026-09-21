@@ -46,7 +46,7 @@ export const StockChart: React.FC<StockChartProps> = ({
   const [range, setRange] = useState('1mo');
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeModel, setActiveModel] = useState<'xgboost' | 'lightgbm' | 'catboost' | 'arima' | 'prophet' | 'lstm'>('xgboost');
+  const [activeModel, setActiveModel] = useState<'xgboost' | 'lightgbm' | 'ensemble'>('ensemble');
   const [mlPredictions, setMlPredictions] = useState<MLForecastResults | null>(null);
   const [factors, setFactors] = useState<DetectedFactorEvent[]>([]);
   const [hoveredFactor, setHoveredFactor] = useState<{
@@ -174,12 +174,9 @@ export const StockChart: React.FC<StockChartProps> = ({
             </button>
 
             {([
+              { id: 'ensemble', label: '🏆 Ensemble' },
               { id: 'xgboost', label: '⭐ XGB' },
               { id: 'lightgbm', label: '⚡ LightGBM' },
-              { id: 'catboost', label: '🌲 CatBoost' },
-              { id: 'lstm', label: '🧠 PyTorch' },
-              { id: 'prophet', label: 'Prophet' },
-              { id: 'arima', label: 'ARIMA' },
             ] as const).map(m => (
               <button
                 key={m.id}
