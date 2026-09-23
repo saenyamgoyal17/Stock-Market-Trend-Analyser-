@@ -7,7 +7,7 @@ import {
   fetchYFChart, ChartPoint, fetchMLPredictions, MLForecastResults,
   fetchDetectedFactors, DetectedFactorEvent, formatChartDate,
 } from '../../services/api.js';
-import { TrendingUp, TrendingDown, Eye, EyeOff, X, AlertCircle, ExternalLink } from 'lucide-react';
+import { TrendingUp, TrendingDown, Eye, EyeOff, X, AlertCircle, ExternalLink, Newspaper } from 'lucide-react';
 
 interface StockChartProps {
   symbol: string;
@@ -46,7 +46,7 @@ export const StockChart: React.FC<StockChartProps> = ({
   const [range, setRange] = useState('1mo');
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeModel, setActiveModel] = useState<'xgboost' | 'lightgbm' | 'ensemble'>('ensemble');
+  const [activeModel, setActiveModel] = useState<'xgboost' | 'lightgbm' | 'catboost' | 'arima' | 'prophet' | 'lstm'>('xgboost');
   const [mlPredictions, setMlPredictions] = useState<MLForecastResults | null>(null);
   const [factors, setFactors] = useState<DetectedFactorEvent[]>([]);
   const [hoveredFactor, setHoveredFactor] = useState<{
@@ -66,26 +66,28 @@ export const StockChart: React.FC<StockChartProps> = ({
     symbol.endsWith('.L') ? '£' : '$'
   );
 
-  // 1. Fetch ML predictions & detected factors when symbol changes
+  // 1. Fetch ML predictions when symbol changes
   useEffect(() => {
     let cancelled = false;
-    const mlPeriod = '1y';
-
-    Promise.allSettled([
-      fetchMLPredictions(symbol, mlPeriod, 15, currentPrice),
-      fetchDetectedFactors(symbol, mlPeriod),
-    ]).then(([mlRes, factorsRes]) => {
+    fetchMLPredictions(symbol, '1y', 15, currentPrice).then(mlRes => {
       if (cancelled) return;
-      if (mlRes.status === 'fulfilled') {
-        setMlPredictions(mlRes.value);
-      }
-      if (factorsRes.status === 'fulfilled') {
-        setFactors(factorsRes.value);
-      }
+      setMlPredictions(mlRes);
+    });
+    return () => { cancelled = true; };
+  }, [symbol]);
+
+  // 2. Fetch detected factors whenever symbol OR timeframe range changes
+  useEffect(() => {
+    let cancelled = false;
+    const factorPeriod = range === '5y' ? '5y' : range === '1y' ? '1y' : range === '3mo' ? '3mo' : range === '1mo' ? '1mo' : range === '5d' ? '5d' : '1d';
+
+    fetchDetectedFactors(symbol, factorPeriod, baseChart).then(factorsRes => {
+      if (cancelled) return;
+      setFactors(factorsRes || []);
     });
 
     return () => { cancelled = true; };
-  }, [symbol]);
+  }, [symbol, range, baseChart]);
 
   // 2. Fetch chart data whenever symbol OR range changes
   useEffect(() => {
@@ -139,12 +141,29 @@ export const StockChart: React.FC<StockChartProps> = ({
   // Find the index of the last historical point (transition point)
   const transitionIdx = data.findIndex(d => d.isForecast) - 1;
 
+  // Match factors that fall within the current chart's historical date range
+  const visibleFactors = useMemo(() => {
+    if (!data || data.length === 0 || factors.length === 0) return [];
+    const hist = data.filter(d => !d.isForecast && (d.date || d.time));
+    if (hist.length === 0) return [];
+
+    const minTime = Math.min(...hist.map(d => d.time || new Date(d.date).getTime()).filter(t => !isNaN(t)));
+    const maxTime = Math.max(...hist.map(d => d.time || new Date(d.date).getTime()).filter(t => !isNaN(t)));
+
+    return factors.filter(f => {
+      const fTime = new Date(f.date + 'T12:00:00Z').getTime();
+      if (isNaN(fTime)) return true;
+      // Allow 1 day buffer
+      return fTime >= (minTime - 86400000) && fTime <= (maxTime + 86400000);
+    });
+  }, [data, factors]);
+
   return (
     <div className="space-y-3">
       {/* Header controls: Range + ML Model Selector */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        {/* Timeframe buttons */}
-        <div className="flex gap-1 bg-[#F4F4F7] p-1 rounded-xl">
+        {/* Range Selector */}
+        <div className="flex items-center gap-1 bg-[#F4F4F7] p-1 rounded-xl">
           {RANGES.map(r => (
             <button
               key={r.value}
@@ -161,23 +180,24 @@ export const StockChart: React.FC<StockChartProps> = ({
           ))}
         </div>
 
-        {/* ML Forecast Selector & Toggle */}
+        {/* ML Forecast Selector */}
         {showMLOverlay && (
-          <div className="flex items-center gap-1.5 bg-[#EBFCF7] p-1 rounded-xl border border-[#00D09C]/20 text-xs font-semibold">
+          <div className="flex items-center gap-1 bg-[#F4F4F7] p-1 rounded-xl">
             <button
               onClick={() => setIsForecastVisible(!isForecastVisible)}
-              className="px-2 py-1 rounded-lg text-[11px] font-bold text-[#00D09C] flex items-center gap-1 hover:bg-[#00D09C]/10 transition-colors"
-              title="Toggle Forecast Overlay"
+              className="p-1.5 rounded-lg transition-colors text-[#7C7E8C] hover:text-[#44475B]"
+              title={isForecastVisible ? 'Hide AI Forecast' : 'Show AI Forecast'}
             >
-              {isForecastVisible ? <Eye size={12} /> : <EyeOff size={12} />}
-              <span className="font-mono uppercase">AI:</span>
+              {isForecastVisible ? <Eye size={14} /> : <EyeOff size={14} />}
             </button>
-
-            {([
-              { id: 'ensemble', label: '🏆 Ensemble' },
-              { id: 'xgboost', label: '⭐ XGB' },
-              { id: 'lightgbm', label: '⚡ LightGBM' },
-            ] as const).map(m => (
+            {[
+              { id: 'xgboost', label: 'XGB' },
+              { id: 'lightgbm', label: 'LGBM' },
+              { id: 'catboost', label: 'CAT' },
+              { id: 'arima', label: 'ARIMA' },
+              { id: 'prophet', label: 'PROPHET' },
+              { id: 'lstm', label: 'LSTM' },
+            ].map(m => (
               <button
                 key={m.id}
                 onClick={() => {
@@ -224,15 +244,15 @@ export const StockChart: React.FC<StockChartProps> = ({
       )}
 
       {/* External Shocks Highlight Banner */}
-      {factors.length > 0 && (
+      {visibleFactors.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 rounded-xl bg-[#FFFBEB] border border-[#FDE68A] text-xs shadow-2xs">
           <div className="flex items-center gap-2 text-[#92400E]">
             <span className="w-2.5 h-2.5 rounded-full bg-[#F59E0B] animate-ping" />
-            <span className="font-bold">{factors.length} External Market Shocks</span>
-            <span className="text-[#B45309]">detected along price trajectory</span>
+            <span className="font-bold">{visibleFactors.length} External Market Shocks</span>
+            <span className="text-[#B45309]">detected along active price trajectory ({range.toUpperCase()})</span>
           </div>
           <span className="text-[11px] font-semibold text-[#D97706] bg-amber-100/80 px-2 py-0.5 rounded-md">
-            Hover cursor over dots on graph to view shock details
+            Hover cursor over dots on graph to view news & shock details
           </span>
         </div>
       )}
@@ -288,6 +308,36 @@ export const StockChart: React.FC<StockChartProps> = ({
 
               <h4 className="text-sm font-bold text-[#111827] leading-snug">{factor.title}</h4>
               <p className="text-xs text-[#6B7280] leading-relaxed">{factor.description}</p>
+
+              {/* Exact News Catalyst Box */}
+              {(factor.news_headline || factor.url || factor.news_url) && (
+                <div className="p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-1.5">
+                  <div className="flex items-center justify-between gap-1 text-[10px] text-[#64748B] font-semibold">
+                    <span className="flex items-center gap-1">
+                      <Newspaper size={12} className="text-[#3B82F6]" />
+                      <span>NEWS AT THIS TIME</span>
+                    </span>
+                    {factor.news_source && (
+                      <span className="font-mono text-[10px] text-[#475569] bg-white px-1.5 py-0.5 rounded border border-[#E2E8F0]">
+                        {factor.news_source}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs font-semibold text-[#0F172A] leading-snug">
+                    {factor.news_headline || factor.description}
+                  </p>
+                  {(factor.news_url || factor.url) && (
+                    <a
+                      href={factor.news_url || factor.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-[#2563EB] hover:underline pt-0.5"
+                    >
+                      Read full story <ExternalLink size={10} />
+                    </a>
+                  )}
+                </div>
+              )}
 
               <div className="pt-2 border-t border-[#F0F0F2] flex items-center justify-between text-[11px]">
                 {hoveredFactor?.price != null && (
@@ -431,7 +481,7 @@ export const StockChart: React.FC<StockChartProps> = ({
               )}
 
               {/* Highlighted Factor Event Dots on Chart */}
-              {factors.map((factor, idx) => {
+              {visibleFactors.map((factor, idx) => {
                 const factorTs = new Date(factor.date + 'T12:00:00Z').getTime();
                 // Match by exact isoDate, formatted date string, or nearest historical trading point
                 const matchPoint =

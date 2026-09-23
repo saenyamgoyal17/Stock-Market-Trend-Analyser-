@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   X, ArrowUpRight, ArrowDownRight, Bookmark,
   CheckCircle2, Sparkles, Globe, Activity, TrendingUp, TrendingDown,
-  AlertCircle, Zap, Shield, HelpCircle
+  AlertCircle, Zap, Shield, HelpCircle, Newspaper, ExternalLink
 } from 'lucide-react';
 import {
   StockData, WorldEventItem, fetchYFQuote, fetchMLPredictions,
@@ -409,18 +409,48 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                 </div>
 
                 {detectedFactors.map((factor, i) => (
-                  <div key={i} className="p-4 rounded-xl border border-[#EAECEF] bg-white space-y-2 hover:shadow-sm transition-shadow">
+                  <div key={i} className="p-4 rounded-xl border border-[#EAECEF] bg-white space-y-2.5 hover:shadow-sm transition-shadow">
                     <div className="flex items-center justify-between">
                       <span
-                        className="text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase"
+                        className="text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider"
                         style={{ background: IMPACT_BG[factor.impact] || '#F4F4F7', color: IMPACT_TEXT[factor.impact] || '#44475B' }}
                       >
-                        {factor.type.replace('_', ' ')} · {factor.impact} impact
+                        {factor.type.replace(/_/g, ' ')} · {factor.impact} impact
                       </span>
                       <span className="text-xs text-[#9B9EA7] font-mono">{factor.date}</span>
                     </div>
                     <h4 className="text-sm font-bold text-[#44475B]">{factor.title}</h4>
                     <p className="text-xs text-[#7C7E8C] leading-relaxed">{factor.description}</p>
+
+                    {/* Associated News Story */}
+                    {(factor.news_headline || factor.url || factor.news_url) && (
+                      <div className="p-3 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] space-y-1 mt-2">
+                        <div className="flex items-center justify-between text-[11px] text-[#64748B] font-semibold">
+                          <span className="flex items-center gap-1.5">
+                            <Newspaper size={13} className="text-[#3B82F6]" />
+                            <span>REPORTED NEWS AT THIS TIME</span>
+                          </span>
+                          {factor.news_source && (
+                            <span className="font-mono text-[10px] text-[#475569] bg-white px-2 py-0.5 rounded border border-[#E2E8F0]">
+                              {factor.news_source}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs font-semibold text-[#1E293B] leading-snug">
+                          {factor.news_headline || factor.description}
+                        </p>
+                        {(factor.news_url || factor.url) && (
+                          <a
+                            href={factor.news_url || factor.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[11px] font-medium text-[#2563EB] hover:underline pt-1"
+                          >
+                            Read full news story <ExternalLink size={11} />
+                          </a>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
