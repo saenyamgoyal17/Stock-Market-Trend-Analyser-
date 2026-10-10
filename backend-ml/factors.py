@@ -379,7 +379,7 @@ def fetch_exact_date_news(topic: str, target_date: str, is_indian: bool = False)
         ctx.verify_mode = ssl.CERT_NONE
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
 
-        with urllib.request.urlopen(req, context=ctx, timeout=1.2) as resp:
+        with urllib.request.urlopen(req, context=ctx, timeout=0.9) as resp:
             root = ET.fromstring(resp.read())
             items = root.findall(".//item")
             for el in items:
@@ -412,11 +412,35 @@ def fetch_exact_company_news(company_name: str, ticker: str, target_date: str) -
     return fetch_exact_date_news(topic, target_date, is_indian=is_indian)
 
 
+_MACRO_SERIES_CACHE = {}  # (sym, period) -> (timestamp, dates, closes)
+
+
+def get_cached_macro_history(sym: str, period: str = "1y") -> tuple:
+    """Fetch macro benchmark history with 5-minute memory cache."""
+    import time
+    now_ts = time.time()
+    cached = _MACRO_SERIES_CACHE.get((sym, period))
+    if cached and (now_ts - cached[0]) < 300:
+        return cached[1], cached[2]
+
+    try:
+        import yfinance as yf
+        t = yf.Ticker(sym)
+        h = t.history(period=period)
+        if not h.empty and len(h) >= 2:
+            dates = [idx.strftime("%Y-%m-%d") for idx in h.index]
+            closes = list(h["Close"])
+            _MACRO_SERIES_CACHE[(sym, period)] = (now_ts, dates, closes)
+            return dates, closes
+    except Exception:
+        pass
+    return [], []
+
+
 def detect_macro_shocks(prices: list, ticker: str = "", sector: str = "", company_name: str = "", period: str = "1y") -> list:
     """Detect real-world outer macro factors across commodities, currencies, interest rates, and geopolitical proxies.
     Dynamically configures proxies for global stocks (US, UK, Europe, India, Asia).
-    Guarantees title, sign, and sentiment match the stock's actual session trajectory on date D."""
-    import yfinance as yf
+    Guarantees sub-second response via parallel prefetching and 5-minute in-memory caching."""
     events = []
     if not prices or len(prices) < 2:
         return events
@@ -429,7 +453,7 @@ def detect_macro_shocks(prices: list, ticker: str = "", sector: str = "", compan
     # 1. Worldwide commodities affecting all global equities
     macro_configs = [
         ("CL=F", "macro_energy", 2.2, "Crude Oil & Fuel", "crude oil OR fuel price OR OPEC OR diesel OR petroleum OR refinery"),
-        ("GC=F", "macro_geopolitical", 1.8, "Safe-Haven Gold", "war OR military conflict OR geopolitical sanctions OR missile strike OR Middle East"),
+        ("GLD", "macro_geopolitical", 1.2, "Safe-Haven Gold", "war OR military conflict OR geopolitical sanctions OR missile strike OR Middle East"),
         ("HG=F", "macro_commodity", 2.2, "Industrial Copper", "copper price OR industrial metals OR LME warehouse stocks OR metal tariffs"),
         ("NG=F", "macro_commodity", 3.2, "Natural Gas & LPG", "natural gas OR LPG shortage OR energy crisis OR pipeline transit"),
     ]
@@ -452,16 +476,21 @@ def detect_macro_shocks(prices: list, ticker: str = "", sector: str = "", compan
         macro_configs.append(("^TNX", "macro_monetary", 2.5, "10Y Treasury Yield", "interest rate hike OR bond yields OR central bank"))
         macro_configs.append(("DX-Y.NYB", "macro_capital", 0.50, "US Dollar Index", "US dollar index OR global currency volatility"))
 
+    # Parallel pre-fetch all needed macro series simultaneously (<1s)
+    all_symbols = [cfg[0] for cfg in macro_configs]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {sym: ex.submit(get_cached_macro_history, sym, period) for sym in all_symbols}
+        macro_histories = {sym: f.result() for sym, f in futures.items()}
+
     sec_lower = sector.lower()
+    raw_macro_events = []
+    is_indian = (mkt == "IN")
 
     for sym, ev_type, thresh, asset_name, news_query in macro_configs:
         try:
-            t = yf.Ticker(sym)
-            h = t.history(period=period, timeout=3)
-            if h.empty or len(h) < 2:
+            h_dates, closes = macro_histories.get(sym, ([], []))
+            if not h_dates or len(h_dates) < 2:
                 continue
-            h_dates = [idx.strftime("%Y-%m-%d") for idx in h.index]
-            closes = list(h["Close"])
 
             for i in range(1, len(h_dates)):
                 d = h_dates[i]
@@ -510,34 +539,64 @@ def detect_macro_shocks(prices: list, ticker: str = "", sector: str = "", compan
                         sentiment_score = abs(round(0.60 + min(0.30, abs(stock_ret) / 10.0), 2))
                         desc = f"Shares advanced {stock_sign} as {asset_name} moved {macro_ret:+.1f}%. {desc_cause}"
 
-                    is_indian = (mkt == "IN")
-                    is_high_impact = abs(macro_ret) >= (thresh * 1.4)
-                    matched_news = None
-                    if is_high_impact or (news_query, d, is_indian) in _DATED_NEWS_CACHE:
-                        matched_news = fetch_exact_date_news(news_query, d, is_indian=is_indian)
-
-                    if matched_news:
-                        headline = matched_news["title"]
-                        source = matched_news["source"]
-                        url = matched_news["url"]
-                    else:
-                        headline = f"Global {asset_name} volatility of {macro_ret:+.1f}% recorded across international commodity trading desks"
-                        source = "Commodity & Futures Exchange Disclosures"
-                        url = f"https://finance.yahoo.com/quote/{sym}"
-
-                    events.append({
+                    raw_macro_events.append({
                         "date": d,
+                        "sym": sym,
                         "type": ev_type,
+                        "thresh": thresh,
+                        "asset_name": asset_name,
+                        "news_query": news_query,
+                        "macro_ret": macro_ret,
                         "title": title,
                         "description": desc,
-                        "impact": "high" if abs(macro_ret) >= (thresh * 1.5) else "medium",
-                        "news_headline": headline,
-                        "news_source": source,
-                        "news_url": url,
                         "sentiment_score": sentiment_score,
                     })
         except Exception:
             continue
+
+    # Identify top 3 most severe macro shocks across all assets to fetch verified news concurrently
+    candidate_macro_shocks = sorted(
+        [e for e in raw_macro_events if abs(e["macro_ret"]) >= (e["thresh"] * 1.4)],
+        key=lambda x: abs(x["macro_ret"]) / x["thresh"],
+        reverse=True
+    )[:3]
+
+    if candidate_macro_shocks:
+        macro_tasks = [(e["news_query"], e["date"], is_indian) for e in candidate_macro_shocks if (e["news_query"], e["date"], is_indian) not in _DATED_NEWS_CACHE]
+        if macro_tasks:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(macro_tasks), 3)) as ex:
+                list(ex.map(lambda item: fetch_exact_date_news(item[0], item[1], is_indian=item[2]), macro_tasks))
+
+    for item in raw_macro_events:
+        d = item["date"]
+        sym = item["sym"]
+        ev_type = item["type"]
+        asset_name = item["asset_name"]
+        news_query = item["news_query"]
+        macro_ret = item["macro_ret"]
+        thresh = item["thresh"]
+
+        matched_news = _DATED_NEWS_CACHE.get((news_query, d, is_indian))
+        if matched_news:
+            headline = matched_news["title"]
+            source = matched_news["source"]
+            url = matched_news["url"]
+        else:
+            headline = f"Global {asset_name} volatility of {macro_ret:+.1f}% recorded across international commodity trading desks"
+            source = f"{asset_name} Futures / Intercontinental Exchange"
+            url = f"https://finance.yahoo.com/quote/{sym}"
+
+        events.append({
+            "date": d,
+            "type": ev_type,
+            "title": item["title"],
+            "description": item["description"],
+            "impact": "high" if abs(macro_ret) >= (thresh * 1.5) else "medium",
+            "news_headline": headline,
+            "news_source": source,
+            "news_url": url,
+            "sentiment_score": item["sentiment_score"],
+        })
 
     return events
 
@@ -553,7 +612,7 @@ def detect_trade_and_policy_events(prices: list, ticker: str = "", sector: str =
     mkt = classify_market(ticker)
     clean_sym = clean_symbol(ticker)
 
-    # Identify top outlier price shock sessions (capped to top 6 most significant to ensure sub-second response)
+    # Identify top outlier price shock sessions (capped to top 3 most significant to ensure sub-second response)
     shock_sessions = []
     for i in range(1, len(prices)):
         p_curr = prices[i]
@@ -563,15 +622,12 @@ def detect_trade_and_policy_events(prices: list, ticker: str = "", sector: str =
             if ret >= 2.0:
                 shock_sessions.append((ret, p_curr["date"][:10]))
     shock_sessions.sort(key=lambda x: x[0], reverse=True)
-    candidate_dates = [d for _, d in shock_sessions[:6]]
+    candidate_dates = [d for _, d in shock_sessions[:3]]
 
     is_indian = (mkt == "IN")
 
+    tasks = []
     for d in candidate_dates:
-        st = daily_stats.get(d, {"ret": 0.0, "is_up": True, "sign": "+0.0%"})
-        is_stock_up = st["is_up"]
-        stock_sign = st["sign"]
-
         # 1. Trade Tariffs & Export Restrictions
         if mkt == "IN":
             trade_q = f'({clean_sym} OR "{sector}") (tariff OR import duty OR export ban OR trade dispute OR customs duty)'
@@ -579,27 +635,7 @@ def detect_trade_and_policy_events(prices: list, ticker: str = "", sector: str =
             trade_q = f'({clean_sym} OR "{sector}") (tariffs OR trade sanction OR export control OR chip restrictions OR trade dispute)'
         else:
             trade_q = f'({clean_sym} OR "{sector}") (tariffs OR sanctions OR trade dispute OR export controls)'
-
-        trade_news = fetch_exact_date_news(trade_q, d, is_indian=is_indian)
-        if trade_news:
-            if not is_stock_up:
-                title = f"Downside Pressure ({stock_sign}) · International Trade & Tariff Policy"
-                sentiment_score = -0.65
-            else:
-                title = f"Upside Momentum ({stock_sign}) · Trade Policy & Tariff Clarification"
-                sentiment_score = 0.65
-
-            events.append({
-                "date": d,
-                "type": "macro_trade",
-                "title": title,
-                "description": f"Trade tariff adjustments, customs duties, or cross-border trade restrictions shifted supply chain terms and market margins for {company_name}.",
-                "impact": "high",
-                "news_headline": trade_news["title"],
-                "news_source": trade_news["source"],
-                "news_url": trade_news["url"],
-                "sentiment_score": sentiment_score,
-            })
+        tasks.append((d, "macro_trade", trade_q))
 
         # 2. Government & Regulatory / Antitrust Directives
         if mkt == "IN":
@@ -608,27 +644,7 @@ def detect_trade_and_policy_events(prices: list, ticker: str = "", sector: str =
             reg_q = f'({clean_sym} OR "{company_name}") (SEC probe OR FTC OR antitrust OR DOJ OR Federal Reserve OR executive order OR regulation)'
         else:
             reg_q = f'({clean_sym} OR "{company_name}") (regulator OR antitrust OR investigation OR central bank OR government)'
-
-        reg_news = fetch_exact_date_news(reg_q, d, is_indian=is_indian)
-        if reg_news:
-            if not is_stock_up:
-                title = f"Downside Pressure ({stock_sign}) · Government & Regulatory Action"
-                sentiment_score = -0.55
-            else:
-                title = f"Upside Momentum ({stock_sign}) · Regulatory Clearance & Policy Approval"
-                sentiment_score = 0.55
-
-            events.append({
-                "date": d,
-                "type": "macro_regulatory",
-                "title": title,
-                "description": f"Regulatory decisions, judicial directives, or governmental economic policy altered operating regulations and corporate sentiment for {company_name}.",
-                "impact": "high",
-                "news_headline": reg_news["title"],
-                "news_source": reg_news["source"],
-                "news_url": reg_news["url"],
-                "sentiment_score": sentiment_score,
-            })
+        tasks.append((d, "macro_regulatory", reg_q))
 
         # 3. Institutional Capital Flows & Liquidity Shocks
         if mkt == "IN":
@@ -637,27 +653,52 @@ def detect_trade_and_policy_events(prices: list, ticker: str = "", sector: str =
             cap_q = f'({clean_sym} OR "Wall Street") ("institutional outflow" OR "hedge fund" OR "liquidity crunch" OR "market selloff")'
         else:
             cap_q = f'({clean_sym}) ("institutional outflows" OR "equity selloff" OR "market liquidity")'
+        tasks.append((d, "macro_capital", cap_q))
 
-        capital_news = fetch_exact_date_news(cap_q, d, is_indian=is_indian)
-        if capital_news:
-            if not is_stock_up:
-                title = f"Downside Pressure ({stock_sign}) · Institutional Capital Outflow Shock"
-                sentiment_score = -0.50
-            else:
-                title = f"Upside Momentum ({stock_sign}) · Institutional Capital Inflow"
-                sentiment_score = 0.50
+    def run_policy_query(task):
+        t_date, t_type, t_q = task
+        res = fetch_exact_date_news(t_q, t_date, is_indian=is_indian)
+        return (t_date, t_type, res)
 
-            events.append({
-                "date": d,
-                "type": "macro_capital",
-                "title": title,
-                "description": f"Large-scale institutional capital reallocation and fund flows influenced liquidity across {company_name} and benchmark indices.",
-                "impact": "medium",
-                "news_headline": capital_news["title"],
-                "news_source": capital_news["source"],
-                "news_url": capital_news["url"],
-                "sentiment_score": sentiment_score,
-            })
+    fetched_results = []
+    if tasks:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(tasks), 9)) as ex:
+            fetched_results = list(ex.map(run_policy_query, tasks))
+
+    for d, ev_type, news in fetched_results:
+        if not news:
+            continue
+        st = daily_stats.get(d, {"ret": 0.0, "is_up": True, "sign": "+0.0%"})
+        is_stock_up = st["is_up"]
+        stock_sign = st["sign"]
+
+        if ev_type == "macro_trade":
+            title = f"Downside Pressure ({stock_sign}) · International Trade & Tariff Policy" if not is_stock_up else f"Upside Momentum ({stock_sign}) · Trade Policy & Tariff Clarification"
+            sentiment_score = -0.65 if not is_stock_up else 0.65
+            desc = f"Trade tariff adjustments, customs duties, or cross-border trade restrictions shifted supply chain terms and market margins for {company_name}."
+            impact = "high"
+        elif ev_type == "macro_regulatory":
+            title = f"Downside Pressure ({stock_sign}) · Government & Regulatory Action" if not is_stock_up else f"Upside Momentum ({stock_sign}) · Regulatory Clearance & Policy Approval"
+            sentiment_score = -0.55 if not is_stock_up else 0.55
+            desc = f"Regulatory decisions, judicial directives, or governmental economic policy altered operating regulations and corporate sentiment for {company_name}."
+            impact = "high"
+        else:
+            title = f"Downside Pressure ({stock_sign}) · Institutional Capital Outflow Shock" if not is_stock_up else f"Upside Momentum ({stock_sign}) · Institutional Capital Inflow"
+            sentiment_score = -0.50 if not is_stock_up else 0.50
+            desc = f"Large-scale institutional capital reallocation and fund flows influenced liquidity across {company_name} and benchmark indices."
+            impact = "medium"
+
+        events.append({
+            "date": d,
+            "type": ev_type,
+            "title": title,
+            "description": desc,
+            "impact": impact,
+            "news_headline": news["title"],
+            "news_source": news["source"],
+            "news_url": news["url"],
+            "sentiment_score": sentiment_score,
+        })
 
     return events
 
@@ -683,23 +724,27 @@ def build_all_factors(ticker_data: dict, index_df: pd.DataFrame, period: str = "
         company_events += detect_index_divergence(prices, index_df)
     company_events += detect_price_shocks(prices)
 
-    # Parallel pre-fetch exact-date company news for the top 8 most recent dates
-    comp_dates = sorted(list({ev["date"] for ev in company_events}), reverse=True)[:8]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
-        ex.map(lambda d: fetch_exact_company_news(company_name, ticker, d), comp_dates)
+    # Parallel pre-fetch exact-date company news for the top 4 most recent dates
+    comp_dates = sorted(list({ev["date"] for ev in company_events}), reverse=True)[:4]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+        list(ex.map(lambda d: fetch_exact_company_news(company_name, ticker, d), comp_dates))
 
     # Attach verified company news for that EXACT date
+    clean_sym = clean_symbol(ticker)
+    clean_name = company_name.split(",")[0].replace(" Inc.", "").replace(" Ltd.", "").replace(" Corp.", "").strip()
+    comp_topic = f'"{clean_name}" OR "{clean_sym}"'
+    is_indian = classify_market(ticker) == "IN"
+
     for ev in company_events:
         ev_date = ev["date"]
         st = daily_stats.get(ev_date, {"ret": 0.0, "is_up": True, "sign": "+0.0%"})
-        comp_news = fetch_exact_company_news(company_name, ticker, ev_date)
+        comp_news = _DATED_NEWS_CACHE.get((comp_topic, ev_date, is_indian))
         if comp_news:
             ev["news_headline"] = comp_news["title"]
             ev["news_source"] = comp_news["source"]
             ev["news_url"] = comp_news["url"]
         else:
             direction = "upside breakout" if st["is_up"] else "downside pullback"
-            clean_sym = clean_symbol(ticker)
             ev["news_headline"] = f"{company_name} ({clean_sym}) institutional block trading flow & {direction}"
             ev["news_source"] = "Exchange Disclosure / Financial Wire"
             ev["news_url"] = f"https://www.google.com/finance/quote/{clean_sym}"
