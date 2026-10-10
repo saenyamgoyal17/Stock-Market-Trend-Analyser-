@@ -68,7 +68,7 @@ def get_factors(ticker: str, period: str = Query("1y")):
                 break
             except Exception:
                 continue
-        events = build_all_factors(stock, index_df)
+        events = build_all_factors(stock, index_df, period=period)
         return {"ticker": ticker, "factors": events, "benchmark_used": peers[0] if peers else None}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -103,7 +103,7 @@ def get_full(ticker: str, period: str = Query("1y"), horizon: int = Query(15)):
                 break
             except Exception:
                 continue
-        factors = build_all_factors(stock, index_df)
+        factors = build_all_factors(stock, index_df, period=period)
         predictions = run_all_forecasts(stock["prices"], horizon=horizon)
 
         return {

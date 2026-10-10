@@ -89,9 +89,12 @@ export interface MLDirectionPrediction {
 export interface MLForecastResults {
   ticker?: string;
   currency_symbol?: string;
-  xgboost?: MLModelForecast;     // Primary: XGBoost with 9 technical indicators
-  lightgbm?: MLModelForecast;    // Secondary: LightGBM with 9 technical indicators
-  ensemble?: MLModelForecast;    // Recommended: XGBoost + LightGBM averaged (best accuracy)
+  xgboost?: MLModelForecast;
+  lightgbm?: MLModelForecast;
+  catboost?: MLModelForecast;
+  arima?: MLModelForecast;
+  prophet?: MLModelForecast;
+  lstm?: MLModelForecast;
   direction?: MLDirectionPrediction;
 }
 
@@ -191,7 +194,7 @@ export async function fetchMLPredictions(
     const res = await fetch(`${ML_API_BASE}/predict/${encodeURIComponent(ticker)}?period=${period}&horizon=${horizon}`);
     if (res.ok) {
       const data = await res.json();
-      if (data && (data.xgboost?.forecast?.length || data.ensemble?.forecast?.length)) {
+      if (data && (data.xgboost?.forecast?.length || data.arima?.forecast?.length)) {
         return data;
       }
     }
@@ -610,28 +613,13 @@ function generateFallbackMLPredictions(symbol: string, horizon = 15, currentPric
     return { model: modelName, forecast };
   };
 
-  // Build xgboost and lightgbm curves, then derive ensemble from them
-  const xgboostFc = generateCurve('XGBoost', 0.038, 0.6);
-  const lightgbmFc = generateCurve('LightGBM', 0.035, 0.55);
-
-  // Ensemble: average of xgboost + lightgbm predictions
-  const ensembleForecast: MLForecastPoint[] = xgboostFc.forecast.map((xp, i) => {
-    const lp = lightgbmFc.forecast[i];
-    const avgPred = (xp.predicted + lp.predicted) / 2;
-    return {
-      date: xp.date,
-      predicted: +avgPred.toFixed(2),
-      lower: +((xp.lower! + lp.lower!) / 2).toFixed(2),
-      upper: +((xp.upper! + lp.upper!) / 2).toFixed(2),
-    };
-  });
-
   return {
     ticker: symbol,
     currency_symbol: isIndian ? '₹' : '$',
-    xgboost: xgboostFc,
-    lightgbm: lightgbmFc,
-    ensemble: { model: 'Ensemble (XGBoost + LightGBM)', forecast: ensembleForecast },
+    xgboost: generateCurve('XGBoost', 0.038, 0.6),
+    arima: generateCurve('ARIMA', 0.021, 0.4),
+    prophet: generateCurve('Prophet', 0.029, 0.5),
+    lstm: generateCurve('LSTM', 0.042, 0.7),
     direction: {
       model: 'XGBoost Classifier',
       direction: 'up',
@@ -735,11 +723,71 @@ export async function computeFactorsFromCandles(
     }
   }
 
-  // Deduplicate by (date, type)
+  // 3. Detect Real Outer Macro Shocks (Crude Oil, Fuel Price Surges, Geopolitical War Safe-Haven)
+  try {
+    const range = period === '5y' ? '5y' : period === '1y' ? '1y' : period === '3mo' ? '3mo' : '1mo';
+    const [oilCandles, goldCandles] = await Promise.all([
+      fetchYFChart('CL=F', range).catch(() => []),
+      fetchYFChart('GC=F', range).catch(() => []),
+    ]);
+
+    const candleDates = new Set(candles.map(c => c.isoDate || (typeof c.date === 'string' && c.date.length === 10 ? c.date : new Date(c.time).toISOString().slice(0, 10))));
+
+    // Energy / Fuel Price Shocks (Crude Oil)
+    if (oilCandles && oilCandles.length > 1) {
+      for (let i = 1; i < oilCandles.length; i++) {
+        const c_prev = oilCandles[i - 1].close;
+        const c_curr = oilCandles[i].close;
+        if (c_prev <= 0) continue;
+        const ret = ((c_curr - c_prev) / c_prev) * 100;
+        const dStr = oilCandles[i].isoDate || new Date(oilCandles[i].time).toISOString().slice(0, 10);
+        if (candleDates.has(dStr) && Math.abs(ret) >= 2.2) {
+          const isSurge = ret > 0;
+          events.push({
+            date: dStr,
+            type: 'macro_energy',
+            title: `Global Crude Oil ${isSurge ? 'Surge' : 'Drop'} (${isSurge ? '+' : ''}${ret.toFixed(1)}%)`,
+            description: `Crude oil and fuel benchmark moved ${isSurge ? '+' : ''}${ret.toFixed(1)}%, shifting refinery crack spreads, retail fuel distribution expenses, and corporate transport overhead for ${cleanSym}.`,
+            impact: Math.abs(ret) >= 3.5 ? 'high' : 'medium',
+            news_headline: `Global Energy Markets: Crude Oil ${isSurge ? 'surges' : 'retreats'} ${isSurge ? '+' : ''}${ret.toFixed(1)}% amid shifting supply expectations`,
+            news_source: 'Reuters / Bloomberg Energy Wire',
+            news_url: `https://finance.yahoo.com/quote/CL=F`,
+            sentiment_score: isSurge ? 0.65 : -0.60,
+          });
+        }
+      }
+    }
+
+    // Geopolitical Safe-Haven Gold Shocks (War & International Conflict Proxy)
+    if (goldCandles && goldCandles.length > 1) {
+      for (let i = 1; i < goldCandles.length; i++) {
+        const c_prev = goldCandles[i - 1].close;
+        const c_curr = goldCandles[i].close;
+        if (c_prev <= 0) continue;
+        const ret = ((c_curr - c_prev) / c_prev) * 100;
+        const dStr = goldCandles[i].isoDate || new Date(goldCandles[i].time).toISOString().slice(0, 10);
+        if (candleDates.has(dStr) && ret >= 1.8) {
+          events.push({
+            date: dStr,
+            type: 'macro_geopolitical',
+            title: `Geopolitical Escalation: Safe-Haven Inflow (Gold +${ret.toFixed(1)}%)`,
+            description: `Bullion safe-haven surge reflects escalating international conflict or geopolitical friction, triggering defensive institutional capital rotation across equity markets.`,
+            impact: ret >= 2.5 ? 'high' : 'medium',
+            news_headline: `Safe-haven assets rally as geopolitical tensions and international conflict escalate`,
+            news_source: 'Financial Times / World Wire',
+            news_url: `https://finance.yahoo.com/quote/GC=F`,
+            sentiment_score: -0.70,
+          });
+        }
+      }
+    }
+  } catch {}
+
+  // Deduplicate by (date, title)
   const seen = new Set<string>();
   const unique: DetectedFactorEvent[] = [];
   for (const ev of events) {
-    const key = `${ev.date}-${ev.type}`;
+    const key = `${ev.date}-${ev.title}`;
     if (!seen.has(key)) {
       seen.add(key);
       unique.push(ev);

@@ -8,7 +8,7 @@ import {
   StockData, WorldEventItem, fetchYFQuote, fetchMLPredictions,
   MLForecastResults, fetchDetectedFactors, DetectedFactorEvent
 } from '../../services/api.js';
-import { StockChart } from './StockChart.js';
+import { StockChart, getFactorTypeBadge } from './StockChart.js';
 import { calculateStockPrediction } from '../../services/prediction.service.js';
 
 interface GrowwStockModalProps {
@@ -136,7 +136,7 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
 
   const tabs = [
     { id: 'overview', label: 'Overview & Technicals' },
-    { id: 'prediction', label: 'ML Predictions (Ensemble)' },
+    { id: 'prediction', label: 'ML Predictions (XGBoost/Prophet)' },
     { id: 'events', label: `External Factors (${detectedFactors.length || relatedEvents.length || 'Live'})` },
   ] as const;
 
@@ -290,7 +290,7 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
               </div>
             )}
 
-            {/* TAB 2: ML PREDICTIONS (ENSEMBLE, XGBOOST, LIGHTGBM) */}
+            {/* TAB 2: ML PREDICTIONS (XGBOOST, PROPHET, ARIMA, LSTM) */}
             {activeTab === 'prediction' && (
               <div className="space-y-6 animate-fade-in">
                 {/* Direction Card */}
@@ -360,17 +360,22 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                   </div>
                 )}
 
-                {/* 3 Models Comparison Grid */}
+                {/* 4 Models Comparison Grid */}
                 <div className="space-y-3">
                   <h4 className="text-xs font-bold uppercase tracking-wider text-[#44475B] font-mono">
-                    15-Day Forecast Targets
+                    Multi-Model 15-Day Forecast Targets
                   </h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     {[
-                      { name: '🏆 Ensemble (Recommended)', key: 'ensemble' as const, color: '#00D09C' },
-                      { name: '⭐ XGBoost 3.4.1', key: 'xgboost' as const, color: '#0284C7' },
-                      { name: '⚡ LightGBM 4.7.0', key: 'lightgbm' as const, color: '#7C3AED' },
+                      { name: '⭐ XGBoost 3.4.1', key: 'xgboost' as const, color: '#00D09C' },
+                      { name: '⚡ LightGBM 4.7.0', key: 'lightgbm' as const, color: '#0284C7' },
+                      { name: '🌲 CatBoost 1.2.10', key: 'catboost' as const, color: '#16A34A' },
+                      { name: '🧠 PyTorch GRU', key: 'lstm' as const, color: '#A855F7' },
+                      { name: '🔮 Prophet 1.4.0', key: 'prophet' as const, color: '#F59E0B' },
+                      { name: '📊 ARIMA (AutoReg)', key: 'arima' as const, color: '#5367FF' },
                     ].map((m, i) => {
+                      // Calibrate: compute the % change from the model's own first forecast
+                      // and apply it to the current displayed price
                       const forecast = mlPredictions?.[m.key]?.forecast;
                       let targetPrice = price * 1.03; // fallback
                       if (forecast && forecast.length > 0) {
@@ -411,12 +416,17 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                 {detectedFactors.map((factor, i) => (
                   <div key={i} className="p-4 rounded-xl border border-[#EAECEF] bg-white space-y-2.5 hover:shadow-sm transition-shadow">
                     <div className="flex items-center justify-between">
-                      <span
-                        className="text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider"
-                        style={{ background: IMPACT_BG[factor.impact] || '#F4F4F7', color: IMPACT_TEXT[factor.impact] || '#44475B' }}
-                      >
-                        {factor.type.replace(/_/g, ' ')} · {factor.impact} impact
-                      </span>
+                      {(() => {
+                        const badge = getFactorTypeBadge(factor.type, factor.impact);
+                        return (
+                          <span
+                            className="text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider flex items-center gap-1"
+                            style={{ background: badge.bg, color: badge.color, border: `1px solid ${badge.color}30` }}
+                          >
+                            {badge.label} · {factor.impact} impact
+                          </span>
+                        );
+                      })()}
                       <span className="text-xs text-[#9B9EA7] font-mono">{factor.date}</span>
                     </div>
                     <h4 className="text-sm font-bold text-[#44475B]">{factor.title}</h4>

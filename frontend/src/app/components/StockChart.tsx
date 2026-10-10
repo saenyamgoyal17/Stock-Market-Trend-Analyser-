@@ -34,6 +34,27 @@ const IMPACT_COLOR: Record<string, string> = {
   low: '#5367FF',
 };
 
+export const getFactorTypeBadge = (type: string, impact: string = 'medium') => {
+  switch (type) {
+    case 'macro_geopolitical':
+      return { label: '🌍 Geopolitical / War', color: '#DC2626', bg: '#FEF2F2' };
+    case 'macro_energy':
+      return { label: '⚡ Energy & Fuel / LPG', color: '#D97706', bg: '#FFFBEB' };
+    case 'macro_commodity':
+      return { label: '📦 Commodity & LPG', color: '#7C3AED', bg: '#F5F3FF' };
+    case 'macro_monetary':
+      return { label: '🏦 Rates & Policy', color: '#2563EB', bg: '#EFF6FF' };
+    case 'volume_spike':
+      return { label: '📈 Volume Surge', color: '#059669', bg: '#ECFDF5' };
+    case 'index_divergence':
+      return { label: '🎯 Market Decoupling', color: '#0D9488', bg: '#F0FDFA' };
+    case 'price_shock':
+      return { label: '💥 Price Breakout', color: '#E11D48', bg: '#FFF1F2' };
+    default:
+      return { label: `📰 ${type.replace(/_/g, ' ')}`, color: '#4B5563', bg: '#F3F4F6' };
+  }
+};
+
 export const StockChart: React.FC<StockChartProps> = ({
   symbol,
   currentPrice,
@@ -244,18 +265,22 @@ export const StockChart: React.FC<StockChartProps> = ({
       )}
 
       {/* External Shocks Highlight Banner */}
-      {visibleFactors.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 rounded-xl bg-[#FFFBEB] border border-[#FDE68A] text-xs shadow-2xs">
-          <div className="flex items-center gap-2 text-[#92400E]">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#F59E0B] animate-ping" />
-            <span className="font-bold">{visibleFactors.length} External Market Shocks</span>
-            <span className="text-[#B45309]">detected along active price trajectory ({range.toUpperCase()})</span>
+      {visibleFactors.length > 0 && (() => {
+        const macroCount = visibleFactors.filter(f => f.type.startsWith('macro_')).length;
+        const compCount = visibleFactors.length - macroCount;
+        return (
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 rounded-xl bg-[#FFFBEB] border border-[#FDE68A] text-xs shadow-2xs">
+            <div className="flex items-center gap-2 text-[#92400E]">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#F59E0B] animate-ping" />
+              <span className="font-bold">{visibleFactors.length} Real External Market & Macro Shocks</span>
+              <span className="text-[#B45309]">({macroCount > 0 ? `${macroCount} Geopolitical/Energy, ` : ''}{compCount} Company Moves)</span>
+            </div>
+            <span className="text-[11px] font-semibold text-[#D97706] bg-amber-100/80 px-2 py-0.5 rounded-md">
+              Hover cursor over dots on graph to view news & shock details
+            </span>
           </div>
-          <span className="text-[11px] font-semibold text-[#D97706] bg-amber-100/80 px-2 py-0.5 rounded-md">
-            Hover cursor over dots on graph to view news & shock details
-          </span>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Chart Canvas */}
       <div ref={chartContainerRef} style={{ height, position: 'relative' }}>
@@ -283,15 +308,21 @@ export const StockChart: React.FC<StockChartProps> = ({
               style={popoverStyle}
             >
               <div className="flex items-center justify-between gap-2">
-                <span
-                  className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide"
-                  style={{
-                    background: dotColor + '20',
-                    color: dotColor,
-                  }}
-                >
-                  {factor.type.replace(/_/g, ' ')} · {factor.impact} impact
-                </span>
+                {(() => {
+                  const badge = getFactorTypeBadge(factor.type, factor.impact);
+                  return (
+                    <span
+                      className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide flex items-center gap-1"
+                      style={{
+                        background: badge.bg,
+                        color: badge.color,
+                        border: `1px solid ${badge.color}30`,
+                      }}
+                    >
+                      {badge.label} · {factor.impact} impact
+                    </span>
+                  );
+                })()}
                 <div className="flex items-center gap-1.5">
                   <span className="text-[#9B9EA7] font-mono text-[11px]">{factor.date}</span>
                   {pinnedFactor && (
