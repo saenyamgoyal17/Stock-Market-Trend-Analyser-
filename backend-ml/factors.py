@@ -288,7 +288,7 @@ def fetch_exact_company_news(company_name: str, ticker: str, target_date: str) -
 
 
 def detect_macro_shocks(prices: list, sector: str = "", company_name: str = "", period: str = "1y") -> list:
-    """Detect real-world outer macro factors (Wars, Crude Oil / Fuel Surges, LPG shortages, Interest Rates)."""
+    """Detect real-world outer macro factors across commodities, currencies, interest rates, and geopolitical proxies."""
     import yfinance as yf
     events = []
     if not prices or len(prices) < 2:
@@ -298,9 +298,11 @@ def detect_macro_shocks(prices: list, sector: str = "", company_name: str = "", 
     stock_dates = {p["date"][:10] for p in prices}
 
     macro_configs = [
-        ("CL=F", "macro_energy", 2.2, "Crude Oil", "crude oil OR fuel price OR OPEC OR diesel OR petroleum"),
-        ("GC=F", "macro_geopolitical", 1.8, "Safe-Haven Gold", "war OR conflict OR geopolitical sanctions OR military strike OR Middle East"),
-        ("NG=F", "macro_commodity", 3.2, "Natural Gas & LPG", "natural gas OR LPG shortage OR energy crisis OR pipeline"),
+        ("CL=F", "macro_energy", 2.2, "Crude Oil & Fuel", "crude oil OR fuel price OR OPEC OR diesel OR petroleum OR refinery"),
+        ("GC=F", "macro_geopolitical", 1.8, "Safe-Haven Gold", "war OR military conflict OR geopolitical sanctions OR missile strike OR Middle East"),
+        ("INR=X", "macro_capital", 0.45, "USD/INR Currency FX", "rupee falls OR rupee gains OR USDINR OR currency valuation OR foreign capital"),
+        ("HG=F", "macro_commodity", 2.2, "Industrial Copper", "copper price OR industrial metals OR LME warehouse stocks OR metal tariffs"),
+        ("NG=F", "macro_commodity", 3.2, "Natural Gas & LPG", "natural gas OR LPG shortage OR energy crisis OR pipeline transit"),
         ("^TNX", "macro_monetary", 2.5, "10Y Treasury Yield", "interest rate hike OR Fed rate OR RBI inflation OR central bank bond yields"),
     ]
 
@@ -342,8 +344,11 @@ def detect_macro_shocks(prices: list, sector: str = "", company_name: str = "", 
                     elif ev_type == "macro_geopolitical":
                         desc = f"Safe-haven bullion jumped {ret:+.1f}%. Flight to safety indicates escalating international conflict, military friction, or war-risk pricing across global assets."
 
+                    elif ev_type == "macro_capital":
+                        desc = f"Currency FX swung {ret:+.1f}%. Fluctuations in USD/INR shift export realization for IT/pharma and alter import costs for crude and raw materials."
+
                     elif ev_type == "macro_commodity":
-                        desc = f"Natural Gas and LPG benchmark swung {ret:+.1f}%, reflecting supply transit bottlenecks, pipeline constraints, and industrial heating tariff adjustments."
+                        desc = f"Industrial raw material and energy benchmark moved {ret:+.1f}%, reflecting global manufacturing demand, pipeline transit constraints, and smelting expenses."
 
                     else:  # macro_monetary
                         desc = f"Benchmark 10Y yields swung {ret:+.1f}%, altering corporate borrowing costs, equity discount rates, and international institutional capital allocation."
@@ -372,6 +377,73 @@ def detect_macro_shocks(prices: list, sector: str = "", company_name: str = "", 
                     })
         except Exception:
             continue
+
+    return events
+
+
+def detect_trade_and_policy_events(prices: list, sector: str = "", company_name: str = "", ticker: str = "") -> list:
+    """Detect trade tariffs, government regulatory probes, and FII capital flow external factors on active dates."""
+    events = []
+    if not prices or len(prices) < 2:
+        return events
+
+    # Focus on session dates with notable price shocks or volume spikes
+    candidate_dates = set()
+    for i in range(1, len(prices)):
+        p_curr = prices[i]
+        p_prev = prices[i - 1]
+        if p_prev.get("close", 0) > 0:
+            ret = abs((p_curr["close"] - p_prev["close"]) / p_prev["close"] * 100)
+            if ret >= 2.0:
+                candidate_dates.add(p_curr["date"][:10])
+
+    clean_sym = ticker.replace(".NS", "").replace(".BO", "").replace("^", "")
+
+    for d in candidate_dates:
+        # Check Trade Tariffs / Export Bans on that date
+        trade_news = fetch_exact_date_news(f'({clean_sym} OR "{sector}") (tariff OR import duty OR export ban OR trade dispute OR visa curbs)', d)
+        if trade_news:
+            events.append({
+                "date": d,
+                "type": "macro_trade",
+                "title": "International Trade Policy & Tariff Movement",
+                "description": f"Trade tariff adjustments, customs duties, or cross-border trade restrictions shifted supply chain terms and market margins for {company_name}.",
+                "impact": "high",
+                "news_headline": trade_news["title"],
+                "news_source": trade_news["source"],
+                "news_url": trade_news["url"],
+                "sentiment_score": -0.65,
+            })
+
+        # Check Government & Regulatory / Court Orders on that date
+        reg_news = fetch_exact_date_news(f'({clean_sym} OR "{company_name}") (government policy OR court order OR SEBI OR regulatory probe OR GST OR windfall tax)', d)
+        if reg_news:
+            events.append({
+                "date": d,
+                "type": "macro_regulatory",
+                "title": "Government Policy & Regulatory Action",
+                "description": f"Regulatory decisions, judicial directives, or governmental economic policy altered operating regulations and corporate sentiment for {company_name}.",
+                "impact": "high",
+                "news_headline": reg_news["title"],
+                "news_source": reg_news["source"],
+                "news_url": reg_news["url"],
+                "sentiment_score": -0.55,
+            })
+
+        # Check Institutional Capital / FII Exodus on that date
+        capital_news = fetch_exact_date_news('("FII selling" OR "foreign institutional outflow" OR "foreign exodus" OR "FII DII data") Indian market', d)
+        if capital_news:
+            events.append({
+                "date": d,
+                "type": "macro_capital",
+                "title": "Foreign Institutional (FII) Capital Flow Shock",
+                "description": f"Large-scale institutional capital reallocation and foreign portfolio fund flows influenced liquidity across {company_name} and benchmark indices.",
+                "impact": "medium",
+                "news_headline": capital_news["title"],
+                "news_source": capital_news["source"],
+                "news_url": capital_news["url"],
+                "sentiment_score": -0.50,
+            })
 
     return events
 
@@ -419,23 +491,67 @@ def build_all_factors(ticker_data: dict, index_df: pd.DataFrame, period: str = "
         if ne["date"] in stock_dates:
             events.append(ne)
 
-    # 3. Outer Macro & Geopolitical Factors (War, Crude Oil, Fuel, LPG, Rates) - strictly date-aligned
+    # 3. Outer Macro & Geopolitical Factors (War, Energy, Currency, Commodities, Rates)
     macro_shocks = detect_macro_shocks(prices, sector=sector, company_name=company_name, period=period)
     events += macro_shocks
 
-    # Strict filtering: NO weekend dates where market was closed
+    # 4. Trade Tariffs, Regulatory Orders & Capital Outflows
+    policy_events = detect_trade_and_policy_events(prices, sector=sector, company_name=company_name, ticker=ticker)
+    events += policy_events
+
+    # 5. Strict filtering: NO weekend dates where market was closed
     valid_events = [ev for ev in events if ev["date"] in stock_dates]
 
-    # Deduplicate events on the same date with the same title
-    seen = set()
-    unique_events = []
+    # 6. GROUP BY DATE & PICK TOP 3 FACTORS PER SINGLE DATE
+    events_by_date = {}
     for ev in valid_events:
-        key = (ev["date"], ev["title"])
-        if key not in seen:
-            seen.add(key)
-            unique_events.append(ev)
+        d = ev["date"]
+        events_by_date.setdefault(d, []).append(ev)
 
-    unique_events.sort(key=lambda e: e["date"], reverse=True)
-    return unique_events
+    final_events = []
+    for d, day_events in events_by_date.items():
+        # Deduplicate identical titles on the same day
+        seen_titles = set()
+        unique_day_events = []
+        for ev in day_events:
+            t = ev.get("title", "")
+            if t not in seen_titles:
+                seen_titles.add(t)
+                unique_day_events.append(ev)
+
+        # If 1, 2, or 3 factors exist on this date -> keep all of them
+        # If MORE than 3 factors exist on this date -> pick the TOP 3
+        if len(unique_day_events) > 3:
+            def score_event(e):
+                impact_val = 3 if e.get("impact") == "high" else 2
+                has_accredited_news = 2 if (e.get("news_headline") and "exchange disclosure" not in e.get("news_source", "").lower()) else 1
+                sentiment_mag = abs(e.get("sentiment_score", 0))
+                return (impact_val, has_accredited_news, sentiment_mag)
+
+            unique_day_events.sort(key=score_event, reverse=True)
+
+            # Prioritize category diversity across the top 3 (e.g. 1 geopolitical/macro, 1 regulatory/trade, 1 price move)
+            picked = []
+            seen_categories = set()
+            for ev in unique_day_events:
+                cat = ev.get("type", "")
+                if cat not in seen_categories and len(picked) < 3:
+                    seen_categories.add(cat)
+                    picked.append(ev)
+
+            # Fill remaining slots up to 3 if diversity pass didn't reach 3
+            for ev in unique_day_events:
+                if len(picked) >= 3:
+                    break
+                if ev not in picked:
+                    picked.append(ev)
+
+            final_events.extend(picked)
+        else:
+            final_events.extend(unique_day_events)
+
+    final_events.sort(key=lambda e: e["date"], reverse=True)
+    return final_events
+
 
 

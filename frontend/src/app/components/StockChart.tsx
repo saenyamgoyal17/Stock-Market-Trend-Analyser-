@@ -37,19 +37,25 @@ const IMPACT_COLOR: Record<string, string> = {
 export const getFactorTypeBadge = (type: string, impact: string = 'medium') => {
   switch (type) {
     case 'macro_geopolitical':
-      return { label: '🌍 Geopolitical / War', color: '#DC2626', bg: '#FEF2F2' };
+      return { label: '🌍 Geopolitical & Conflict', color: '#DC2626', bg: '#FEF2F2' };
+    case 'macro_trade':
+      return { label: '🚢 Tariffs & Trade Policy', color: '#B45309', bg: '#FFFBEB' };
+    case 'macro_regulatory':
+      return { label: '⚖️ Govt & Regulatory Action', color: '#7C3AED', bg: '#F5F3FF' };
+    case 'macro_capital':
+      return { label: '💸 FII Capital & Currency FX', color: '#0369A1', bg: '#F0F9FF' };
     case 'macro_energy':
-      return { label: '⚡ Energy & Fuel / LPG', color: '#D97706', bg: '#FFFBEB' };
+      return { label: '⚡ Energy & Fuel Supply', color: '#D97706', bg: '#FFFBEB' };
     case 'macro_commodity':
-      return { label: '📦 Commodity & LPG', color: '#7C3AED', bg: '#F5F3FF' };
+      return { label: '📦 Commodities & Raw Materials', color: '#4F46E5', bg: '#EEF2FF' };
     case 'macro_monetary':
-      return { label: '🏦 Rates & Policy', color: '#2563EB', bg: '#EFF6FF' };
+      return { label: '🏦 Rates & Monetary Policy', color: '#2563EB', bg: '#EFF6FF' };
     case 'volume_spike':
-      return { label: '📈 Volume Surge', color: '#059669', bg: '#ECFDF5' };
+      return { label: '📈 Volume Surge Outlier', color: '#059669', bg: '#ECFDF5' };
     case 'index_divergence':
-      return { label: '🎯 Market Decoupling', color: '#0D9488', bg: '#F0FDFA' };
+      return { label: '🎯 Market Benchmark Decoupling', color: '#0D9488', bg: '#F0FDFA' };
     case 'price_shock':
-      return { label: '💥 Price Breakout', color: '#E11D48', bg: '#FFF1F2' };
+      return { label: '💥 Price Breakout Shock', color: '#E11D48', bg: '#FFF1F2' };
     default:
       return { label: `📰 ${type.replace(/_/g, ' ')}`, color: '#4B5563', bg: '#F3F4F6' };
   }
@@ -369,6 +375,39 @@ export const StockChart: React.FC<StockChartProps> = ({
                   )}
                 </div>
               )}
+
+              {/* Other concurrent top factors on the same date */}
+              {(() => {
+                const dayOthers = visibleFactors.filter(f => f.date === factor.date && f.title !== factor.title);
+                if (dayOthers.length === 0) return null;
+                return (
+                  <div className="pt-2 border-t border-[#F0F0F2] space-y-1.5">
+                    <span className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider block">
+                      Other Factors on This Date ({dayOthers.length + 1} total):
+                    </span>
+                    <div className="space-y-1">
+                      {dayOthers.map((o, idx) => {
+                        const b = getFactorTypeBadge(o.type, o.impact);
+                        return (
+                          <div
+                            key={idx}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPinnedFactor(o);
+                            }}
+                            className="p-1.5 rounded-lg bg-[#F8FAFC] hover:bg-[#F1F5F9] border border-[#E2E8F0] cursor-pointer transition-colors flex items-center justify-between gap-1 text-[11px]"
+                          >
+                            <span className="font-semibold text-[#1E293B] truncate">{o.title}</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded font-bold shrink-0" style={{ background: b.bg, color: b.color }}>
+                              {b.label}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div className="pt-2 border-t border-[#F0F0F2] flex items-center justify-between text-[11px]">
                 {hoveredFactor?.price != null && (
