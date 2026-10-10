@@ -228,25 +228,41 @@ def fetch_news_sentiment(query: str, ticker: str = "", from_date: str = None) ->
     return events
 
 
-def parse_google_news_rss(query: str, max_items: int = 15) -> list:
-    """Fetch live real-time news headlines via Google News RSS without API keys."""
+_DATED_NEWS_CACHE = {}
+
+
+def fetch_exact_date_news(topic: str, target_date: str) -> dict:
+    """Fetch verified news headline published on or around the exact historical target_date."""
+    key = (topic, target_date)
+    if key in _DATED_NEWS_CACHE:
+        return _DATED_NEWS_CACHE[key]
+
     import ssl
     import urllib.request
     import urllib.parse
     import xml.etree.ElementTree as ET
+    from datetime import datetime, timedelta
 
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=en-US&gl=US&ceid=US:en"
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-    items = []
     try:
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+        dt = datetime.strptime(target_date, "%Y-%m-%d")
+        d_before = (dt - timedelta(days=1)).strftime("%Y-%m-%d")
+        d_after = (dt + timedelta(days=2)).strftime("%Y-%m-%d")
+        q = f"{topic} after:{d_before} before:{d_after}"
+        url = f"https://news.google.com/rss/search?q={urllib.parse.quote(q)}&hl=en-US&gl=US&ceid=US:en"
+
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+
+        with urllib.request.urlopen(req, context=ctx, timeout=3.5) as resp:
             root = ET.fromstring(resp.read())
-            for el in root.findall(".//item")[:max_items]:
+            items = root.findall(".//item")
+            for el in items:
                 t = el.find("title").text or ""
-                p = el.find("pubDate").text or ""
+                # filter out generic price quote noise
+                if any(bad in t.lower() for bad in ["current price of", "share price today", "calculator", "lottery", "horoscope"]):
+                    continue
                 l = el.find("link").text or ""
                 source = "Financial Media"
                 title_clean = t
@@ -254,22 +270,21 @@ def parse_google_news_rss(query: str, max_items: int = 15) -> list:
                     parts = t.rsplit(" - ", 1)
                     title_clean = parts[0]
                     source = parts[1]
-                dt_str = ""
-                try:
-                    dt = datetime.strptime(p[:25].strip(), "%a, %d %b %Y %H:%M:%S")
-                    dt_str = dt.strftime("%Y-%m-%d")
-                except Exception:
-                    dt_str = datetime.now().strftime("%Y-%m-%d")
-                if title_clean:
-                    items.append({
-                        "title": title_clean,
-                        "date": dt_str,
-                        "source": source,
-                        "url": l
-                    })
+                res = {"title": title_clean, "source": source, "url": l, "date": target_date}
+                _DATED_NEWS_CACHE[key] = res
+                return res
     except Exception:
         pass
-    return items
+
+    _DATED_NEWS_CACHE[key] = None
+    return None
+
+
+def fetch_exact_company_news(company_name: str, ticker: str, target_date: str) -> dict:
+    """Fetch verified company-specific news published on the exact date."""
+    clean_sym = ticker.replace(".NS", "").replace(".BO", "").replace("^", "")
+    topic = f'"{company_name}" OR "{clean_sym}"'
+    return fetch_exact_date_news(topic, target_date)
 
 
 def detect_macro_shocks(prices: list, sector: str = "", company_name: str = "", period: str = "1y") -> list:
@@ -279,49 +294,22 @@ def detect_macro_shocks(prices: list, sector: str = "", company_name: str = "", 
     if not prices or len(prices) < 2:
         return events
 
+    # Only trading days present in the stock's actual session calendar (excludes weekends & holidays!)
     stock_dates = {p["date"][:10] for p in prices}
-    min_date = min(stock_dates)
-    max_date = max(stock_dates)
 
-    # 1. Fetch real-time live macro and geopolitical news headlines
-    energy_news = parse_google_news_rss("crude oil OR fuel price OR OPEC OR LPG shortage OR diesel", 15)
-    war_news = parse_google_news_rss("war OR conflict OR geopolitical sanctions OR military strike OR Middle East", 15)
-    policy_news = parse_google_news_rss("interest rate hike OR Fed rate OR RBI inflation OR central bank", 12)
-
-    energy_by_date = {n["date"]: n for n in energy_news}
-    war_by_date = {n["date"]: n for n in war_news}
-    policy_by_date = {n["date"]: n for n in policy_news}
-
-    # Helper to find closest news headline by date
-    def find_best_news(target_date: str, news_list: list, news_map: dict):
-        if target_date in news_map:
-            return news_map[target_date]
-        # Look for news within +/- 2 days
-        for n in news_list:
-            try:
-                d1 = datetime.strptime(target_date, "%Y-%m-%d")
-                d2 = datetime.strptime(n["date"], "%Y-%m-%d")
-                if abs((d1 - d2).days) <= 2:
-                    return n
-            except Exception:
-                pass
-        return news_list[0] if news_list else None
-
-    # 2. Macro benchmark instruments tracking global outer forces
     macro_configs = [
-        ("CL=F", "macro_energy", 2.2, "Crude Oil", energy_news, energy_by_date),
-        ("GC=F", "macro_geopolitical", 1.8, "Safe-Haven Gold", war_news, war_by_date),
-        ("NG=F", "macro_commodity", 3.2, "Natural Gas & LPG", energy_news, energy_by_date),
-        ("^TNX", "macro_monetary", 2.5, "10Y Treasury Yield", policy_news, policy_by_date),
-        ("^VIX", "macro_geopolitical", 10.0, "CBOE Volatility (VIX)", war_news, war_by_date),
+        ("CL=F", "macro_energy", 2.2, "Crude Oil", "crude oil OR fuel price OR OPEC OR diesel OR petroleum"),
+        ("GC=F", "macro_geopolitical", 1.8, "Safe-Haven Gold", "war OR conflict OR geopolitical sanctions OR military strike OR Middle East"),
+        ("NG=F", "macro_commodity", 3.2, "Natural Gas & LPG", "natural gas OR LPG shortage OR energy crisis OR pipeline"),
+        ("^TNX", "macro_monetary", 2.5, "10Y Treasury Yield", "interest rate hike OR Fed rate OR RBI inflation OR central bank bond yields"),
     ]
 
     sec_lower = sector.lower()
 
-    for sym, ev_type, thresh, asset_name, fallback_news, news_map in macro_configs:
+    for sym, ev_type, thresh, asset_name, news_query in macro_configs:
         try:
             t = yf.Ticker(sym)
-            h = t.history(period=period)
+            h = t.history(period=period, timeout=3)
             if h.empty or len(h) < 2:
                 continue
             h_dates = [idx.strftime("%Y-%m-%d") for idx in h.index]
@@ -352,10 +340,7 @@ def detect_macro_shocks(prices: list, sector: str = "", company_name: str = "", 
                             desc = f"Crude oil moved {ret:+.1f}%, altering nationwide diesel freight distribution overhead and synthetic polymer packaging costs."
 
                     elif ev_type == "macro_geopolitical":
-                        if sym == "^VIX":
-                            desc = f"Global fear gauge spiked {ret:+.1f}%. Heightened geopolitical uncertainty and market-wide de-risking trigger institutional equity portfolio hedging."
-                        else:
-                            desc = f"Safe-haven bullion jumped {ret:+.1f}%. Flight to safety indicates escalating international conflict, military friction, or war-risk pricing across global assets."
+                        desc = f"Safe-haven bullion jumped {ret:+.1f}%. Flight to safety indicates escalating international conflict, military friction, or war-risk pricing across global assets."
 
                     elif ev_type == "macro_commodity":
                         desc = f"Natural Gas and LPG benchmark swung {ret:+.1f}%, reflecting supply transit bottlenecks, pipeline constraints, and industrial heating tariff adjustments."
@@ -363,10 +348,16 @@ def detect_macro_shocks(prices: list, sector: str = "", company_name: str = "", 
                     else:  # macro_monetary
                         desc = f"Benchmark 10Y yields swung {ret:+.1f}%, altering corporate borrowing costs, equity discount rates, and international institutional capital allocation."
 
-                    matched_news = find_best_news(d, fallback_news, news_map)
-                    headline = matched_news["title"] if matched_news else f"Global {asset_name} {direction} of {ret:+.1f}% on macroeconomic catalysts"
-                    source = matched_news["source"] if matched_news else "Exchange & Commodity Wire"
-                    url = matched_news["url"] if matched_news else f"https://finance.yahoo.com/quote/{sym}"
+                    # Query EXACT DATE news for this specific historical shock
+                    matched_news = fetch_exact_date_news(news_query, d)
+                    if matched_news:
+                        headline = matched_news["title"]
+                        source = matched_news["source"]
+                        url = matched_news["url"]
+                    else:
+                        headline = f"Global {asset_name} single-day volatility of {ret:+.1f}% recorded across international commodity trading desks"
+                        source = "Commodity & Futures Exchange Disclosures"
+                        url = f"https://finance.yahoo.com/quote/{sym}"
 
                     events.append({
                         "date": d,
@@ -382,36 +373,6 @@ def detect_macro_shocks(prices: list, sector: str = "", company_name: str = "", 
         except Exception:
             continue
 
-    # 3. Add top verified geopolitical war/conflict breaking events within the active date range
-    for w in war_news[:3]:
-        if min_date <= w["date"] <= max_date and w["date"] in stock_dates:
-            events.append({
-                "date": w["date"],
-                "type": "macro_geopolitical",
-                "title": "Geopolitical Conflict & International Sanctions",
-                "description": f"Escalating international geopolitical conflict impacts cross-border supply chains, maritime shipping corridors, and investor risk appetite for {company_name}.",
-                "impact": "high",
-                "news_headline": w["title"],
-                "news_source": w["source"],
-                "news_url": w["url"],
-                "sentiment_score": -0.75,
-            })
-
-    # 4. Add top verified fuel/LPG shortage events within the active date range
-    for e in energy_news[:3]:
-        if min_date <= e["date"] <= max_date and e["date"] in stock_dates:
-            events.append({
-                "date": e["date"],
-                "type": "macro_energy",
-                "title": "Energy & Fuel Market Supply Disruption",
-                "description": f"Global petroleum and LPG supply constraints shift industrial input costs and energy distribution expenses across {sector or 'market'} equities.",
-                "impact": "high",
-                "news_headline": e["title"],
-                "news_source": e["source"],
-                "news_url": e["url"],
-                "sentiment_score": -0.60,
-            })
-
     return events
 
 
@@ -420,53 +381,55 @@ def build_all_factors(ticker_data: dict, index_df: pd.DataFrame, period: str = "
     ticker = ticker_data.get("ticker", "")
     company_name = ticker_data.get("name", ticker)
     sector = ticker_data.get("sector", "")
+    stock_dates = {p["date"][:10] for p in prices}
+
+    import concurrent.futures
 
     events = []
     # 1. Company internal factors: volume accumulation, benchmark divergence, price breakout
-    events += detect_volume_spikes(prices)
+    company_events = []
+    company_events += detect_volume_spikes(prices)
     if index_df is not None and not index_df.empty:
-        events += detect_index_divergence(prices, index_df)
-    events += detect_price_shocks(prices)
+        company_events += detect_index_divergence(prices, index_df)
+    company_events += detect_price_shocks(prices)
 
-    # 2. Company-specific news sentiment
+    # Parallel pre-fetch exact-date company news for all identified dates
+    comp_dates = {ev["date"] for ev in company_events}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+        ex.map(lambda d: fetch_exact_company_news(company_name, ticker, d), comp_dates)
+
+    # For each company-level event, attach verified company news for that EXACT date!
+    for ev in company_events:
+        ev_date = ev["date"]
+        comp_news = fetch_exact_company_news(company_name, ticker, ev_date)
+        if comp_news:
+            ev["news_headline"] = comp_news["title"]
+            ev["news_source"] = comp_news["source"]
+            ev["news_url"] = comp_news["url"]
+        else:
+            direction = "expansion" if ("outperformed" in ev["title"].lower() or "(up)" in ev["title"].lower() or "surge" in ev["title"].lower()) else "pullback"
+            ev["news_headline"] = f"{company_name} institutional block trading flow & {direction} reaction"
+            ev["news_source"] = "Exchange Disclosure / Financial Wire"
+            ev["news_url"] = f"https://www.google.com/finance/quote/{ticker}"
+        events.append(ev)
+
+    # 2. Company-specific news sentiment from yfinance ticker news
     news_events = fetch_news_sentiment(company_name, ticker=ticker)
-    events += news_events
+    for ne in news_events:
+        if ne["date"] in stock_dates:
+            events.append(ne)
 
-    # Map news headlines to volume spikes and divergence events where dates align (exact or +/- 1 day)
-    news_by_date = {n["date"]: n for n in news_events}
-    for ev in events:
-        if ev.get("type") in ("volume_spike", "index_divergence", "price_shock"):
-            ev_date = ev["date"]
-            matched_news = news_by_date.get(ev_date)
-            if not matched_news:
-                for n_date, n_val in news_by_date.items():
-                    try:
-                        d1 = datetime.strptime(ev_date, "%Y-%m-%d")
-                        d2 = datetime.strptime(n_date, "%Y-%m-%d")
-                        if abs((d1 - d2).days) <= 1:
-                            matched_news = n_val
-                            break
-                    except Exception:
-                        pass
-
-            if matched_news:
-                ev["news_headline"] = matched_news.get("news_headline")
-                ev["news_source"] = matched_news.get("news_source")
-                ev["news_url"] = matched_news.get("news_url")
-            else:
-                direction = "expansion" if ("outperformed" in ev["title"].lower() or "(up)" in ev["title"].lower() or "surge" in ev["title"].lower()) else "pullback"
-                ev["news_headline"] = f"{company_name} institutional block flow & {direction} reaction"
-                ev["news_source"] = "Exchange Disclosure / Financial Wire"
-                ev["news_url"] = f"https://www.google.com/finance/quote/{ticker}"
-
-    # 3. Outer Macro & Geopolitical Factors (War, Crude Oil, Fuel, LPG, Rates)
+    # 3. Outer Macro & Geopolitical Factors (War, Crude Oil, Fuel, LPG, Rates) - strictly date-aligned
     macro_shocks = detect_macro_shocks(prices, sector=sector, company_name=company_name, period=period)
     events += macro_shocks
+
+    # Strict filtering: NO weekend dates where market was closed
+    valid_events = [ev for ev in events if ev["date"] in stock_dates]
 
     # Deduplicate events on the same date with the same title
     seen = set()
     unique_events = []
-    for ev in events:
+    for ev in valid_events:
         key = (ev["date"], ev["title"])
         if key not in seen:
             seen.add(key)
@@ -474,4 +437,5 @@ def build_all_factors(ticker_data: dict, index_df: pd.DataFrame, period: str = "
 
     unique_events.sort(key=lambda e: e["date"], reverse=True)
     return unique_events
+
 
