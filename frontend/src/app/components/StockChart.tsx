@@ -421,9 +421,10 @@ export const StockChart: React.FC<StockChartProps> = ({
                     style={{
                       background: factor.sentiment_score >= 0 ? '#EBFCF7' : '#FEF2F2',
                       color: factor.sentiment_score >= 0 ? '#00D09C' : '#EB5B3C',
+                      border: `1px solid ${factor.sentiment_score >= 0 ? '#00D09C30' : '#EB5B3C30'}`,
                     }}
                   >
-                    {factor.sentiment_score >= 0 ? '▲ Bullish Impulse' : '▼ Bearish Shock'} ({(Math.abs(factor.sentiment_score) * 100).toFixed(0)}%)
+                    {factor.sentiment_score >= 0 ? '▲ Bullish Driver' : '▼ Bearish Drag'} ({(Math.abs(factor.sentiment_score) * 100).toFixed(0)}%)
                   </span>
                 )}
               </div>
@@ -461,6 +462,12 @@ export const StockChart: React.FC<StockChartProps> = ({
                 </filter>
                 <filter id="neon-glow-low" x="-60%" y="-60%" width="220%" height="220%">
                   <feDropShadow dx="0" dy="0" stdDeviation="3" floodColor="#5367FF" floodOpacity="0.75" />
+                </filter>
+                <filter id="neon-glow-down" x="-60%" y="-60%" width="220%" height="220%">
+                  <feDropShadow dx="0" dy="0" stdDeviation="3" floodColor="#EB5B3C" floodOpacity="0.8" />
+                </filter>
+                <filter id="neon-glow-up" x="-60%" y="-60%" width="220%" height="220%">
+                  <feDropShadow dx="0" dy="0" stdDeviation="3" floodColor="#00D09C" floodOpacity="0.8" />
                 </filter>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F2" vertical={false} />
@@ -565,7 +572,10 @@ export const StockChart: React.FC<StockChartProps> = ({
                     .sort((a, b) => Math.abs(a.time - factorTs) - Math.abs(b.time - factorTs))[0];
 
                 if (!matchPoint || matchPoint.close == null || matchPoint.close <= 0) return null;
-                const dotColor = IMPACT_COLOR[factor.impact] || '#F59E0B';
+                const isDown = factor.sentiment_score != null
+                  ? factor.sentiment_score < 0
+                  : (factor.title.includes('(-') || factor.title.toLowerCase().includes('pullback') || factor.title.toLowerCase().includes('drop') || factor.title.toLowerCase().includes('selling') || factor.title.toLowerCase().includes('drag'));
+                const dotColor = isDown ? '#EB5B3C' : '#00D09C';
                 const isHovered = hoveredFactor?.factor.title === factor.title;
                 const isPinned = pinnedFactor?.title === factor.title;
                 const isSelected = isHovered || isPinned;
@@ -582,7 +592,7 @@ export const StockChart: React.FC<StockChartProps> = ({
                     shape={(props: any) => {
                       const { cx, cy } = props;
                       if (cx == null || cy == null) return null;
-                      const neonFilter = `url(#neon-glow-${factor.impact || 'medium'})`;
+                      const neonFilter = isDown ? 'url(#neon-glow-down)' : 'url(#neon-glow-up)';
 
                       return (
                         <g

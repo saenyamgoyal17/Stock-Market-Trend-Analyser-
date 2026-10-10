@@ -679,20 +679,21 @@ export async function computeFactorsFromCandles(
       const day = candles[i];
       const prevDay = candles[i - 1];
       const dayRet = prevDay.close > 0 ? ((day.close - prevDay.close) / prevDay.close) * 100 : 0;
-      const direction = day.close >= (day.open || day.close) ? 'up' : 'down';
+      const isUp = dayRet >= 0;
+      const sign = `${isUp ? '+' : ''}${dayRet.toFixed(1)}%`;
       const volStr = currentVol >= 1e6 ? `${(currentVol / 1e6).toFixed(2)}M` : `${(currentVol / 1e3).toFixed(1)}K`;
       const dateStr = day.isoDate || (typeof day.date === 'string' && day.date.length === 10 ? day.date : new Date(day.time).toISOString().slice(0, 10));
 
       events.push({
         date: dateStr,
         type: 'volume_spike',
-        title: `Unusual trading volume (${direction} ${dayRet >= 0 ? '+' : ''}${dayRet.toFixed(1)}%)`,
-        description: `Volume reached ${volStr} (${ratio.toFixed(1)}x the ${w}-session average), indicating ${direction === 'up' ? 'strong institutional block accumulation' : 'distribution & profit-taking pressure'}.`,
+        title: isUp ? `Institutional Buying Volume (${sign})` : `Heavy Selling Volume (${sign})`,
+        description: `Volume reached ${volStr} (${ratio.toFixed(1)}x the ${w}-session average), indicating ${isUp ? 'strong institutional block accumulation' : 'distribution & selling pressure'}.`,
         impact: (z > 2.2 || ratio > 2.4) ? 'high' : 'medium',
-        news_headline: `${cleanSym} trading volume surges ${ratio.toFixed(1)}x as institutional flow accelerates`,
+        news_headline: `${cleanSym} trading volume reaches ${volStr} (${ratio.toFixed(1)}x average) as shares ${isUp ? 'gain' : 'fall'} ${sign}`,
         news_source: 'Exchange Disclosures / Bloomberg Wire',
         news_url: `https://www.google.com/finance/quote/${encodeURIComponent(cleanSym)}`,
-        sentiment_score: direction === 'up' ? 0.62 : -0.45,
+        sentiment_score: isUp ? 0.65 : -0.65,
       });
     }
   }
@@ -705,20 +706,20 @@ export async function computeFactorsFromCandles(
     const ret = ((curr.close - prev.close) / prev.close) * 100;
 
     if (Math.abs(ret) >= 2.2) {
-      const direction = ret > 0 ? 'Surge' : 'Pullback';
       const isPos = ret > 0;
+      const sign = `${isPos ? '+' : ''}${ret.toFixed(1)}%`;
       const dateStr = curr.isoDate || (typeof curr.date === 'string' && curr.date.length === 10 ? curr.date : new Date(curr.time).toISOString().slice(0, 10));
 
       events.push({
         date: dateStr,
         type: 'price_shock',
-        title: `Single-Day Price ${direction} (${isPos ? '+' : ''}${ret.toFixed(1)}%)`,
-        description: `Stock moved ${isPos ? '+' : ''}${ret.toFixed(2)}% in a single session to close at ${curr.close.toFixed(2)}. Driven by ${isPos ? 'aggressive buyer momentum & sector rotation' : 'intraday profit taking & broader market drag'}.`,
+        title: isPos ? `Single-Day Price Surge (${sign})` : `Single-Day Price Pullback (${sign})`,
+        description: `Stock moved ${sign} in a single session to close at ${curr.close.toFixed(2)}. Driven by ${isPos ? 'aggressive buyer momentum & sector rotation' : 'intraday profit taking & broader market drag'}.`,
         impact: Math.abs(ret) >= 3.8 ? 'high' : 'medium',
-        news_headline: `${cleanSym} shares ${isPos ? 'jump' : 'slip'} ${isPos ? '+' : ''}${ret.toFixed(1)}% amid heavy trading turnover`,
+        news_headline: `${cleanSym} shares ${isPos ? 'jump' : 'slip'} ${sign} amid heavy trading turnover`,
         news_source: 'Financial Times / Reuters',
         news_url: `https://www.google.com/finance/quote/${encodeURIComponent(cleanSym)}`,
-        sentiment_score: isPos ? 0.72 : -0.58,
+        sentiment_score: isPos ? 0.75 : -0.75,
       });
     }
   }
@@ -731,7 +732,12 @@ export async function computeFactorsFromCandles(
       fetchYFChart('GC=F', range).catch(() => []),
     ]);
 
-    const candleDates = new Set(candles.map(c => c.isoDate || (typeof c.date === 'string' && c.date.length === 10 ? c.date : new Date(c.time).toISOString().slice(0, 10))));
+    const candleMap = new Map<string, { close: number; prevClose: number }>();
+    for (let j = 0; j < candles.length; j++) {
+      const d = candles[j].isoDate || (typeof candles[j].date === 'string' && candles[j].date.length === 10 ? candles[j].date : new Date(candles[j].time).toISOString().slice(0, 10));
+      const prevC = j > 0 ? candles[j - 1].close : candles[j].close;
+      candleMap.set(d, { close: candles[j].close, prevClose: prevC });
+    }
 
     // Energy / Fuel Price Shocks (Crude Oil)
     if (oilCandles && oilCandles.length > 1) {
@@ -741,18 +747,25 @@ export async function computeFactorsFromCandles(
         if (c_prev <= 0) continue;
         const ret = ((c_curr - c_prev) / c_prev) * 100;
         const dStr = oilCandles[i].isoDate || new Date(oilCandles[i].time).toISOString().slice(0, 10);
-        if (candleDates.has(dStr) && Math.abs(ret) >= 2.2) {
+        if (candleMap.has(dStr) && Math.abs(ret) >= 2.2) {
           const isSurge = ret > 0;
+          const sc = candleMap.get(dStr)!;
+          const sRet = sc.prevClose > 0 ? ((sc.close - sc.prevClose) / sc.prevClose) * 100 : 0;
+          const isStockUp = sRet >= 0;
+          const sSign = `${isStockUp ? '+' : ''}${sRet.toFixed(1)}%`;
+
           events.push({
             date: dStr,
             type: 'macro_energy',
-            title: `Global Crude Oil ${isSurge ? 'Surge' : 'Drop'} (${isSurge ? '+' : ''}${ret.toFixed(1)}%)`,
-            description: `Crude oil and fuel benchmark moved ${isSurge ? '+' : ''}${ret.toFixed(1)}%, shifting refinery crack spreads, retail fuel distribution expenses, and corporate transport overhead for ${cleanSym}.`,
+            title: isStockUp
+              ? `Stock Surge (${sSign}) · Crude Oil ${isSurge ? 'Surge' : 'Drop'} (${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%)`
+              : `Stock Pullback (${sSign}) · Crude Oil ${isSurge ? 'Surge' : 'Drop'} (${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%)`,
+            description: `Shares moved ${sSign} as crude oil and fuel benchmark moved ${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%, shifting refinery crack spreads, retail fuel distribution expenses, and corporate transport overhead for ${cleanSym}.`,
             impact: Math.abs(ret) >= 3.5 ? 'high' : 'medium',
-            news_headline: `Global Energy Markets: Crude Oil ${isSurge ? 'surges' : 'retreats'} ${isSurge ? '+' : ''}${ret.toFixed(1)}% amid shifting supply expectations`,
+            news_headline: `Global Energy Markets: Crude Oil ${isSurge ? 'surges' : 'retreats'} ${ret >= 0 ? '+' : ''}${ret.toFixed(1)}% amid shifting supply expectations`,
             news_source: 'Reuters / Bloomberg Energy Wire',
             news_url: `https://finance.yahoo.com/quote/CL=F`,
-            sentiment_score: isSurge ? 0.65 : -0.60,
+            sentiment_score: isStockUp ? 0.65 : -0.65,
           });
         }
       }
@@ -766,17 +779,24 @@ export async function computeFactorsFromCandles(
         if (c_prev <= 0) continue;
         const ret = ((c_curr - c_prev) / c_prev) * 100;
         const dStr = goldCandles[i].isoDate || new Date(goldCandles[i].time).toISOString().slice(0, 10);
-        if (candleDates.has(dStr) && ret >= 1.8) {
+        if (candleMap.has(dStr) && ret >= 1.8) {
+          const sc = candleMap.get(dStr)!;
+          const sRet = sc.prevClose > 0 ? ((sc.close - sc.prevClose) / sc.prevClose) * 100 : 0;
+          const isStockUp = sRet >= 0;
+          const sSign = `${isStockUp ? '+' : ''}${sRet.toFixed(1)}%`;
+
           events.push({
             date: dStr,
             type: 'macro_geopolitical',
-            title: `Geopolitical Escalation: Safe-Haven Inflow (Gold +${ret.toFixed(1)}%)`,
-            description: `Bullion safe-haven surge reflects escalating international conflict or geopolitical friction, triggering defensive institutional capital rotation across equity markets.`,
+            title: isStockUp
+              ? `Stock Gain (${sSign}) · Safe-Haven Bullion (+${ret.toFixed(1)}%)`
+              : `Stock Pullback (${sSign}) · Safe-Haven Bullion Escalation (+${ret.toFixed(1)}%)`,
+            description: `Shares moved ${sSign} as bullion safe-haven surged +${ret.toFixed(1)}%, reflecting international conflict, sanctions, or war-risk pricing across global assets.`,
             impact: ret >= 2.5 ? 'high' : 'medium',
             news_headline: `Safe-haven assets rally as geopolitical tensions and international conflict escalate`,
             news_source: 'Financial Times / World Wire',
             news_url: `https://finance.yahoo.com/quote/GC=F`,
-            sentiment_score: -0.70,
+            sentiment_score: isStockUp ? 0.60 : -0.70,
           });
         }
       }

@@ -427,7 +427,21 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                           </span>
                         );
                       })()}
-                      <span className="text-xs text-[#9B9EA7] font-mono">{factor.date}</span>
+                      <div className="flex items-center gap-2">
+                        {factor.sentiment_score != null && (
+                          <span
+                            className="text-[10px] px-2 py-0.5 rounded-full font-bold font-mono"
+                            style={{
+                              background: factor.sentiment_score >= 0 ? '#EBFCF7' : '#FEF2F2',
+                              color: factor.sentiment_score >= 0 ? '#00D09C' : '#EB5B3C',
+                              border: `1px solid ${factor.sentiment_score >= 0 ? '#00D09C30' : '#EB5B3C30'}`,
+                            }}
+                          >
+                            {factor.sentiment_score >= 0 ? '▲ Bullish' : '▼ Bearish'}
+                          </span>
+                        )}
+                        <span className="text-xs text-[#9B9EA7] font-mono">{factor.date}</span>
+                      </div>
                     </div>
                     <h4 className="text-sm font-bold text-[#44475B]">{factor.title}</h4>
                     <p className="text-xs text-[#7C7E8C] leading-relaxed">{factor.description}</p>

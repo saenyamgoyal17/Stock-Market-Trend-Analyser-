@@ -212,10 +212,21 @@ def fetch_stock_data(ticker: str, period: str = "1y", interval: str = None) -> d
 
 
 def fetch_sector_peers(ticker: str, is_indian: bool) -> list:
-    """Return a small set of index/sector tickers to compare volume & correlation against."""
-    if is_indian or ticker.endswith(INDIAN_SUFFIXES) or ticker in KNOWN_INDIAN:
+    """Return appropriate benchmark indices for the stock's regional exchange."""
+    t = (ticker or "").upper().strip()
+    if is_indian or t.endswith(INDIAN_SUFFIXES) or t in KNOWN_INDIAN:
         return ["^NSEI", "^BSESN"]  # Nifty 50, Sensex
-    return ["^GSPC", "^DJI", "^IXIC"]  # S&P500, Dow, Nasdaq
+    if t.endswith(".L"):
+        return ["^FTSE", "^GSPC"]   # FTSE 100, S&P 500
+    if any(t.endswith(s) for s in [".DE", ".PA", ".AS", ".MI", ".MC", ".BR", ".LS"]):
+        return ["^GDAXI", "^STOXX50E", "^GSPC"]  # DAX, Euro Stoxx 50
+    if t.endswith((".TO", ".V")):
+        return ["^GSPTSE", "^GSPC"]  # TSX
+    if t.endswith((".AX", ".AXP")):
+        return ["^AXJO", "^GSPC"]   # ASX 200
+    if t.endswith((".T", ".TYO")):
+        return ["^N225", "^GSPC"]   # Nikkei 225
+    return ["^GSPC", "^IXIC", "^DJI"]  # S&P 500, Nasdaq, Dow
 
 
 def fetch_index_series(index_ticker: str, period: str = "1y") -> pd.DataFrame:
