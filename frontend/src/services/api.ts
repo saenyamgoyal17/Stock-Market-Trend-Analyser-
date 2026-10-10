@@ -109,6 +109,62 @@ export interface DetectedFactorEvent {
   news_source?: string;
   news_url?: string;
   url?: string;
+  stock_return_pct?: number;
+  impact_pct?: number;
+}
+
+/** Extract exact stock percentage return for an external factor event */
+export function getFactorPercentage(factor: DetectedFactorEvent): number {
+  if (typeof factor.stock_return_pct === 'number' && !isNaN(factor.stock_return_pct)) {
+    return factor.stock_return_pct;
+  }
+  if (typeof factor.impact_pct === 'number' && !isNaN(factor.impact_pct)) {
+    return factor.impact_pct;
+  }
+  const titleMatch = factor.title.match(/([+-]?\d+(?:\.\d+)?)\s*%/);
+  if (titleMatch) {
+    return parseFloat(titleMatch[1]);
+  }
+  const descMatch = factor.description.match(/([+-]?\d+(?:\.\d+)?)\s*%/);
+  if (descMatch) {
+    return parseFloat(descMatch[1]);
+  }
+  if (typeof factor.sentiment_score === 'number') {
+    return factor.sentiment_score * 5;
+  }
+  return 0;
+}
+
+/**
+ * Top external factors sorted strictly by percentage impact magnitude |%| (ignoring sign).
+ * For example: -10% is placed above +8% because |-10%| = 10% > 8%.
+ */
+export function getTopImpactFactors(factors: DetectedFactorEvent[], limit: number = 10): DetectedFactorEvent[] {
+  if (!factors || factors.length === 0) return [];
+
+  // Deduplicate events with identical title + date
+  const seen = new Set<string>();
+  const unique: DetectedFactorEvent[] = [];
+  for (const f of factors) {
+    const key = `${f.date}_${f.title.trim().toLowerCase()}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(f);
+    }
+  }
+
+  return [...unique]
+    .sort((a, b) => {
+      const pA = getFactorPercentage(a);
+      const pB = getFactorPercentage(b);
+      const magA = Math.abs(pA);
+      const magB = Math.abs(pB);
+      if (Math.abs(magB - magA) > 0.001) {
+        return magB - magA; // Larger magnitude first (e.g. -10% above +8%)
+      }
+      return b.date.localeCompare(a.date);
+    })
+    .slice(0, limit);
 }
 
 export interface MacroIndicator {

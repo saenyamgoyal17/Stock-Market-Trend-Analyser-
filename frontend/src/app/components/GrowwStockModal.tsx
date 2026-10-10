@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   X, ArrowUpRight, ArrowDownRight, Bookmark,
-  CheckCircle2, Sparkles, Globe, Activity, TrendingUp, TrendingDown,
+  Sparkles, Globe, Activity, TrendingUp, TrendingDown,
   AlertCircle, Zap, Shield, HelpCircle, Newspaper, ExternalLink
 } from 'lucide-react';
 import {
   StockData, WorldEventItem, fetchYFQuote, fetchMLPredictions,
-  MLForecastResults, fetchDetectedFactors, DetectedFactorEvent
+  MLForecastResults, fetchDetectedFactors, DetectedFactorEvent,
+  getFactorPercentage, getTopImpactFactors
 } from '../../services/api.js';
 import { StockChart, getFactorTypeBadge } from './StockChart.js';
 import { calculateStockPrediction } from '../../services/prediction.service.js';
@@ -47,11 +48,7 @@ const IMPACT_TEXT: Record<string, string> = {
 export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initialStock, events, onClose }) => {
   const [stock, setStock] = useState<StockData>(initialStock);
   const [activeTab, setActiveTab] = useState<'overview' | 'prediction' | 'events'>('overview');
-  const [orderType, setOrderType] = useState<'buy' | 'sell'>('buy');
-  const [productType, setProductType] = useState<'delivery' | 'intraday'>('delivery');
-  const [shares, setShares] = useState(1);
   const [isBookmarked, setIsBookmarked] = useState(false);
-  const [orderPlaced, setOrderPlaced] = useState(false);
 
   const [mlPredictions, setMlPredictions] = useState<MLForecastResults | null>(null);
   const [detectedFactors, setDetectedFactors] = useState<DetectedFactorEvent[]>([]);
@@ -127,23 +124,20 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
   const w52High = stock.high52 || (price * 1.18);
   const todayProg = Math.max(0, Math.min(100, ((price - todayLow) / Math.max(1, todayHigh - todayLow)) * 100));
   const w52Prog = Math.max(0, Math.min(100, ((price - w52Low) / Math.max(1, w52High - w52Low)) * 100));
-  const totalAmt = shares * price;
-
-  const handleOrder = () => {
-    setOrderPlaced(true);
-    setTimeout(() => setOrderPlaced(false), 3000);
-  };
+  const top10Factors = useMemo(() => {
+    return getTopImpactFactors(detectedFactors, 10);
+  }, [detectedFactors]);
 
   const tabs = [
     { id: 'overview', label: 'Overview & Technicals' },
     { id: 'prediction', label: 'ML Predictions (XGBoost/Prophet)' },
-    { id: 'events', label: `External Factors (${detectedFactors.length || relatedEvents.length || 'Live'})` },
+    { id: 'events', label: `All External Factors (${detectedFactors.length || relatedEvents.length || 'Live'})` },
   ] as const;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="w-full max-w-[1150px] max-h-[92vh] rounded-2xl bg-white shadow-2xl flex flex-col overflow-hidden animate-fade-in"
+        className="w-full max-w-[1240px] max-h-[92vh] rounded-2xl bg-white shadow-2xl flex flex-col overflow-hidden animate-fade-in"
         onClick={e => e.stopPropagation()}
         style={{ fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif" }}
       >
@@ -189,7 +183,7 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
         <div className="flex-1 overflow-y-auto flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-[#EAECEF]">
 
           {/* LEFT COLUMN */}
-          <div className="flex-1 lg:w-[65%] p-6 space-y-6 overflow-y-auto">
+          <div className="flex-1 lg:w-[58%] p-6 space-y-6 overflow-y-auto">
             {/* Live Price */}
             <div>
               <div className="flex items-baseline gap-3">
@@ -493,103 +487,146 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
 
           </div>
 
-          {/* RIGHT COLUMN: ORDER PANEL */}
-          <div className="lg:w-[35%] p-6 flex flex-col justify-between bg-[#FAFAFC]">
-            <div className="space-y-5">
-              {/* Buy/Sell toggle */}
-              <div className="grid grid-cols-2 gap-0 rounded-xl overflow-hidden border border-[#EAECEF] shadow-2xs">
-                <button
-                  onClick={() => setOrderType('buy')}
-                  className="py-3 text-sm font-bold transition-all"
-                  style={{
-                    background: orderType === 'buy' ? '#00D09C' : '#fff',
-                    color: orderType === 'buy' ? '#fff' : '#7C7E8C',
-                  }}
-                >
-                  BUY
-                </button>
-                <button
-                  onClick={() => setOrderType('sell')}
-                  className="py-3 text-sm font-bold transition-all"
-                  style={{
-                    background: orderType === 'sell' ? '#EB5B3C' : '#fff',
-                    color: orderType === 'sell' ? '#fff' : '#7C7E8C',
-                  }}
-                >
-                  SELL
-                </button>
+          {/* RIGHT COLUMN: TOP 10 HIGH-IMPACT EXTERNAL FACTORS */}
+          <div className="lg:w-[42%] flex flex-col bg-[#FAFAFC] border-t lg:border-t-0 lg:border-l border-[#EAECEF] h-full overflow-hidden">
+            {/* Header */}
+            <div className="p-5 border-b border-[#EAECEF] bg-white sticky top-0 z-10 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-[#EBFCF7] text-[#00D09C] flex items-center justify-center font-black text-sm shadow-2xs border border-[#00D09C]/20">
+                    10
+                  </div>
+                  <div>
+                    <h3 className="text-[15px] font-bold text-[#44475B] flex items-center gap-1.5 leading-tight">
+                      Top 10 External Factors
+                    </h3>
+                    <p className="text-[11px] text-[#7C7E8C]">Ranked across all historical dates</p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-extrabold uppercase tracking-wide bg-[#F4F4F7] text-[#44475B] px-2.5 py-1 rounded-md border border-[#EAECEF]">
+                  Ranked by |%|
+                </span>
               </div>
 
-              {/* Product type */}
-              <div className="flex items-center gap-6 text-sm font-semibold text-[#44475B]">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio" name="product" checked={productType === 'delivery'}
-                    onChange={() => setProductType('delivery')}
-                    style={{ accentColor: '#00D09C' }}
-                  />
-                  Delivery (CNC)
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio" name="product" checked={productType === 'intraday'}
-                    onChange={() => setProductType('intraday')}
-                    style={{ accentColor: '#00D09C' }}
-                  />
-                  Intraday (MIS)
-                </label>
+              {/* Explanatory banner */}
+              <div className="p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] text-[11px] text-[#475569] leading-snug flex items-start gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-[#00D09C] mt-1.5 shrink-0" />
+                <span>
+                  <b>Ranked by magnitude:</b> Sorted strictly by price impact value (e.g. <b>−10%</b> appears above <b>+8%</b>, ignoring the sign).
+                </span>
               </div>
-
-              {/* Quantity */}
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-xs font-mono text-[#7C7E8C]">
-                  <span>Quantity (Shares)</span>
-                  <span>{stock.exchange || 'NSE'}</span>
-                </div>
-                <input
-                  type="number" min="1" value={shares}
-                  onChange={e => setShares(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#EAECEF] text-lg font-bold text-[#44475B] outline-none focus:border-[#00D09C] bg-white font-mono"
-                />
-              </div>
-
-              {/* Price */}
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-xs font-mono text-[#7C7E8C]">
-                  <span>Price (Market)</span>
-                  <span className="px-1.5 py-0.5 rounded bg-[#EBFCF7] text-[10px] font-bold text-[#00D09C]">LIVE LTP</span>
-                </div>
-                <div className="px-3.5 py-2.5 rounded-xl border border-[#EAECEF] text-lg font-bold text-[#44475B] bg-white font-mono">
-                  {cs}{f2(price)}
-                </div>
-              </div>
-
-              {/* Summary */}
-              <div className="p-4 rounded-xl bg-white border border-[#EAECEF] text-xs font-mono space-y-2">
-                <div className="flex justify-between text-[#7C7E8C]">
-                  <span>Required Margin:</span>
-                  <span className="font-bold text-[#44475B]">{cs}{f2(totalAmt)}</span>
-                </div>
-                <div className="flex justify-between text-[#7C7E8C]">
-                  <span>Available Balance:</span>
-                  <span className="font-bold text-[#00D09C]">{cs}1,00,000.00</span>
-                </div>
-              </div>
-
-              {orderPlaced && (
-                <div className="p-3.5 rounded-xl bg-[#F0FDF9] border border-[#00D09C]/40 text-[#00D09C] text-xs font-bold flex items-center gap-2 animate-fade-in">
-                  <CheckCircle2 size={16} /> Simulated Order Executed Successfully!
-                </div>
-              )}
             </div>
 
-            <button
-              onClick={handleOrder}
-              className="w-full py-4 rounded-xl font-bold text-sm text-white mt-6 transition-all hover:opacity-95 shadow-md uppercase font-mono"
-              style={{ background: orderType === 'buy' ? '#00D09C' : '#EB5B3C' }}
-            >
-              {orderType === 'buy' ? `BUY ${shares} SHARES · ${cs}${f2(totalAmt)}` : `SELL ${shares} SHARES`}
-            </button>
+            {/* Scrollable list of Top 10 factors */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {top10Factors.length === 0 ? (
+                <div className="p-8 text-center bg-white rounded-2xl border border-[#EAECEF] space-y-3 my-6">
+                  <Activity size={28} className="mx-auto text-[#00D09C] animate-pulse" />
+                  <p className="text-sm font-bold text-[#44475B]">Scanning Top External Market Factors...</p>
+                  <p className="text-xs text-[#7C7E8C] leading-relaxed max-w-xs mx-auto">
+                    Analyzing global geopolitical conflict, energy supply, interest rates, currency shocks, and tariffs for {stock.symbol}.
+                  </p>
+                </div>
+              ) : (
+                top10Factors.map((factor, index) => {
+                  const pVal = getFactorPercentage(factor);
+                  const isFactorPos = pVal >= 0;
+                  const badge = getFactorTypeBadge(factor.type, factor.impact);
+                  const rankBadgeStyle =
+                    index === 0
+                      ? 'bg-amber-500 text-white shadow-xs font-black'
+                      : index === 1
+                      ? 'bg-slate-700 text-white font-bold'
+                      : index === 2
+                      ? 'bg-amber-700 text-white font-bold'
+                      : 'bg-[#F0F1F5] text-[#555869] font-bold';
+
+                  return (
+                    <div
+                      key={`top10_${factor.date}_${factor.title}_${index}`}
+                      className="p-4 rounded-xl bg-white border border-[#EAECEF] hover:border-[#00D09C]/60 hover:shadow-xs transition-all space-y-2.5"
+                    >
+                      {/* Top Header: Rank, Date, and Percentage Pill */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-[11px] ${rankBadgeStyle}`}>
+                            #{index + 1}
+                          </span>
+                          <span className="text-[12px] font-mono font-medium text-[#7C7E8C]">
+                            {factor.date}
+                          </span>
+                        </div>
+
+                        {/* Impact percentage pill */}
+                        <div
+                          className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-extrabold font-mono shadow-2xs ${
+                            isFactorPos
+                              ? 'bg-[#EBFCF7] text-[#00D09C] border border-[#00D09C]/20'
+                              : 'bg-[#FEF2F2] text-[#EB5B3C] border border-[#EB5B3C]/20'
+                          }`}
+                        >
+                          {isFactorPos ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+                          <span>{isFactorPos ? '+' : ''}{pVal.toFixed(1)}%</span>
+                          <span className="text-[9px] font-semibold opacity-75">
+                            (|{Math.abs(pVal).toFixed(1)}%|)
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Factor Category Badge & Title */}
+                      <div>
+                        <span
+                          className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-md mb-1.5"
+                          style={{ color: badge.color, backgroundColor: badge.bg }}
+                        >
+                          {badge.label}
+                        </span>
+                        <h4 className="text-[13px] font-bold text-[#1E293B] leading-snug">
+                          {factor.title}
+                        </h4>
+                      </div>
+
+                      {/* Causal description */}
+                      <p className="text-xs text-[#64748B] leading-relaxed">
+                        {factor.description}
+                      </p>
+
+                      {/* Attached News Disclosure */}
+                      {(factor.news_headline || factor.news_url || factor.url) && (
+                        <div className="pt-2.5 border-t border-[#F1F5F9] mt-2 space-y-1.5">
+                          <div className="flex items-center justify-between text-[10px] text-[#64748B]">
+                            <span className="flex items-center gap-1 font-semibold text-[#3B82F6]">
+                              <Newspaper size={12} />
+                              <span>REPORTED NEWS</span>
+                            </span>
+                            {factor.news_source && (
+                              <span className="font-mono text-[9px] text-[#475569] bg-[#F8FAFC] px-1.5 py-0.5 rounded border border-[#E2E8F0]">
+                                {factor.news_source}
+                              </span>
+                            )}
+                          </div>
+                          {factor.news_headline && (
+                            <p className="text-xs font-semibold text-[#1E293B] leading-snug">
+                              "{factor.news_headline}"
+                            </p>
+                          )}
+                          {(factor.news_url || factor.url) && (
+                            <a
+                              href={factor.news_url || factor.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-[11px] font-medium text-[#2563EB] hover:underline pt-0.5"
+                            >
+                              Read full news story <ExternalLink size={11} />
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       </div>

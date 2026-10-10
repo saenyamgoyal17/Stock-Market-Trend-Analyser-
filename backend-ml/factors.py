@@ -139,6 +139,8 @@ def detect_volume_spikes(prices: list, z_threshold: float = 1.3) -> list:
                 "description": desc,
                 "impact": "high" if (z > 2.2 or ratio > 2.4) else "medium",
                 "sentiment_score": sentiment_score,
+                "stock_return_pct": round(ret, 2),
+                "impact_pct": round(ret, 2),
             })
     return events
 
@@ -189,6 +191,8 @@ def detect_index_divergence(prices: list, index_df: pd.DataFrame, threshold_pct:
                 "description": desc,
                 "impact": "high" if abs(divergence) > 3.5 else "medium",
                 "sentiment_score": sentiment_score,
+                "stock_return_pct": round(stock_ret, 2),
+                "impact_pct": round(stock_ret, 2),
             })
     return events
 
@@ -228,6 +232,8 @@ def detect_price_shocks(prices: list, threshold_pct: float = 2.2) -> list:
                 "description": desc,
                 "impact": "high" if abs(ret) >= 3.8 else "medium",
                 "sentiment_score": sentiment_score,
+                "stock_return_pct": round(ret, 2),
+                "impact_pct": round(ret, 2),
             })
     return events
 
@@ -353,6 +359,8 @@ def fetch_news_sentiment(query: str, ticker: str = "", from_date: str = None, da
             "news_source": top_source,
             "news_url": top_url,
             "url": top_url,
+            "stock_return_pct": round(st["ret"], 2),
+            "impact_pct": round(st["ret"], 2),
         })
     return events
 
@@ -550,6 +558,8 @@ def detect_macro_shocks(prices: list, ticker: str = "", sector: str = "", compan
                         "title": title,
                         "description": desc,
                         "sentiment_score": sentiment_score,
+                        "stock_return_pct": round(stock_ret, 2),
+                        "impact_pct": round(stock_ret, 2),
                     })
         except Exception:
             continue
@@ -596,6 +606,8 @@ def detect_macro_shocks(prices: list, ticker: str = "", sector: str = "", compan
             "news_source": source,
             "news_url": url,
             "sentiment_score": item["sentiment_score"],
+            "stock_return_pct": item["stock_return_pct"],
+            "impact_pct": item["impact_pct"],
         })
 
     return events
@@ -698,6 +710,8 @@ def detect_trade_and_policy_events(prices: list, ticker: str = "", sector: str =
             "news_source": news["source"],
             "news_url": news["url"],
             "sentiment_score": sentiment_score,
+            "stock_return_pct": round(st["ret"], 2),
+            "impact_pct": round(st["ret"], 2),
         })
 
     return events
