@@ -379,7 +379,7 @@ def fetch_exact_date_news(topic: str, target_date: str, is_indian: bool = False)
         ctx.verify_mode = ssl.CERT_NONE
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
 
-        with urllib.request.urlopen(req, context=ctx, timeout=3.5) as resp:
+        with urllib.request.urlopen(req, context=ctx, timeout=1.2) as resp:
             root = ET.fromstring(resp.read())
             items = root.findall(".//item")
             for el in items:
@@ -511,7 +511,11 @@ def detect_macro_shocks(prices: list, ticker: str = "", sector: str = "", compan
                         desc = f"Shares advanced {stock_sign} as {asset_name} moved {macro_ret:+.1f}%. {desc_cause}"
 
                     is_indian = (mkt == "IN")
-                    matched_news = fetch_exact_date_news(news_query, d, is_indian=is_indian)
+                    is_high_impact = abs(macro_ret) >= (thresh * 1.4)
+                    matched_news = None
+                    if is_high_impact or (news_query, d, is_indian) in _DATED_NEWS_CACHE:
+                        matched_news = fetch_exact_date_news(news_query, d, is_indian=is_indian)
+
                     if matched_news:
                         headline = matched_news["title"]
                         source = matched_news["source"]
@@ -549,15 +553,17 @@ def detect_trade_and_policy_events(prices: list, ticker: str = "", sector: str =
     mkt = classify_market(ticker)
     clean_sym = clean_symbol(ticker)
 
-    # Identify notable price shock sessions
-    candidate_dates = set()
+    # Identify top outlier price shock sessions (capped to top 6 most significant to ensure sub-second response)
+    shock_sessions = []
     for i in range(1, len(prices)):
         p_curr = prices[i]
         p_prev = prices[i - 1]
         if p_prev.get("close", 0) > 0:
             ret = abs((p_curr["close"] - p_prev["close"]) / p_prev["close"] * 100)
             if ret >= 2.0:
-                candidate_dates.add(p_curr["date"][:10])
+                shock_sessions.append((ret, p_curr["date"][:10]))
+    shock_sessions.sort(key=lambda x: x[0], reverse=True)
+    candidate_dates = [d for _, d in shock_sessions[:6]]
 
     is_indian = (mkt == "IN")
 
@@ -677,8 +683,8 @@ def build_all_factors(ticker_data: dict, index_df: pd.DataFrame, period: str = "
         company_events += detect_index_divergence(prices, index_df)
     company_events += detect_price_shocks(prices)
 
-    # Parallel pre-fetch exact-date company news for all identified dates
-    comp_dates = {ev["date"] for ev in company_events}
+    # Parallel pre-fetch exact-date company news for the top 8 most recent dates
+    comp_dates = sorted(list({ev["date"] for ev in company_events}), reverse=True)[:8]
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
         ex.map(lambda d: fetch_exact_company_news(company_name, ticker, d), comp_dates)
 

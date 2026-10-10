@@ -213,7 +213,12 @@ export async function fetchDetectedFactors(
   chartData?: ChartPoint[]
 ): Promise<DetectedFactorEvent[]> {
   try {
-    const res = await fetch(`${ML_API_BASE}/factors/${encodeURIComponent(ticker)}?period=${period}`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const res = await fetch(`${ML_API_BASE}/factors/${encodeURIComponent(ticker)}?period=${period}`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
     if (res.ok) {
       const data = await res.json();
       if (data.factors && data.factors.length > 0) {
@@ -221,7 +226,7 @@ export async function fetchDetectedFactors(
       }
     }
   } catch (err) {
-    console.warn(`FastAPI factors fetch failed for ${ticker}:`, err);
+    console.warn(`FastAPI factors fetch failed or timed out for ${ticker}:`, err);
   }
 
   return computeFactorsFromCandles(ticker, period, chartData);

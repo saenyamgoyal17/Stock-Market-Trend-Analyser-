@@ -171,17 +171,28 @@ export const StockChart: React.FC<StockChartProps> = ({
   // Match factors that fall within the current chart's historical date range
   const visibleFactors = useMemo(() => {
     if (!data || data.length === 0 || factors.length === 0) return [];
-    const hist = data.filter(d => !d.isForecast && (d.date || d.time));
-    if (hist.length === 0) return [];
+    const hist = data.filter(d => !d.isForecast);
+    if (hist.length === 0) return factors;
 
-    const minTime = Math.min(...hist.map(d => d.time || new Date(d.date).getTime()).filter(t => !isNaN(t)));
-    const maxTime = Math.max(...hist.map(d => d.time || new Date(d.date).getTime()).filter(t => !isNaN(t)));
+    const validTimes = hist.map(d => d.time).filter((t): t is number => typeof t === 'number' && t > 0);
+    const validIsoDates = new Set(
+      hist.map(d => d.isoDate || (typeof d.date === 'string' && d.date.length === 10 ? d.date : ''))
+        .filter(Boolean)
+    );
+
+    if (validTimes.length === 0 && validIsoDates.size === 0) return factors;
+
+    const minTime = validTimes.length > 0 ? Math.min(...validTimes) : 0;
+    const maxTime = validTimes.length > 0 ? Math.max(...validTimes) : Infinity;
 
     return factors.filter(f => {
+      if (validIsoDates.has(f.date)) return true;
       const fTime = new Date(f.date + 'T12:00:00Z').getTime();
       if (isNaN(fTime)) return true;
-      // Allow 1 day buffer
-      return fTime >= (minTime - 86400000) && fTime <= (maxTime + 86400000);
+      if (validTimes.length > 0) {
+        return fTime >= (minTime - 86400000 * 2) && fTime <= (maxTime + 86400000 * 2);
+      }
+      return true;
     });
   }, [data, factors]);
 

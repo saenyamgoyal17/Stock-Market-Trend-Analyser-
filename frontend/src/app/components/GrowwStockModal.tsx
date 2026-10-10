@@ -413,7 +413,18 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                   <span className="text-xs text-[#7C7E8C]">Volume anomalies, Index divergence & News</span>
                 </div>
 
-                {detectedFactors.map((factor, i) => (
+                {detectedFactors.length === 0 ? (
+                  <div className="p-10 text-center bg-white rounded-xl border border-[#EAECEF] space-y-3">
+                    <div className="w-10 h-10 rounded-full bg-[#EBFCF7] text-[#00D09C] flex items-center justify-center mx-auto text-base font-bold animate-pulse">
+                      ⚡
+                    </div>
+                    <h4 className="text-sm font-bold text-[#44475B]">Scanning External Market Factors</h4>
+                    <p className="text-xs text-[#7C7E8C] max-w-sm mx-auto leading-relaxed">
+                      Analyzing real-time macro telemetry, safe-haven safe inflows, commodity volatility, and exchange announcements...
+                    </p>
+                  </div>
+                ) : (
+                  detectedFactors.map((factor, i) => (
                   <div key={i} className="p-4 rounded-xl border border-[#EAECEF] bg-white space-y-2.5 hover:shadow-sm transition-shadow">
                     <div className="flex items-center justify-between">
                       {(() => {
@@ -476,7 +487,7 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                       </div>
                     )}
                   </div>
-                ))}
+                )))}
               </div>
             )}
 
