@@ -73,7 +73,7 @@ export const StockChart: React.FC<StockChartProps> = ({
   const [range, setRange] = useState('1mo');
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeModel, setActiveModel] = useState<'ensemble' | 'xgboost' | 'lightgbm' | 'lstm'>('ensemble');
+  const [activeModel, setActiveModel] = useState<'ensemble' | 'xgboost' | 'lstm'>('ensemble');
   const [mlPredictions, setMlPredictions] = useState<MLForecastResults | null>(null);
   const [factors, setFactors] = useState<DetectedFactorEvent[]>([]);
   const [hoveredFactor, setHoveredFactor] = useState<{
@@ -231,7 +231,6 @@ export const StockChart: React.FC<StockChartProps> = ({
             {[
               { id: 'ensemble', label: '★ ENSEMBLE' },
               { id: 'xgboost', label: 'XGB' },
-              { id: 'lightgbm', label: 'LGBM' },
               { id: 'lstm', label: 'ATTN-LSTM' },
             ].map(m => (
               <button

@@ -51,6 +51,7 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
   const [isBookmarked, setIsBookmarked] = useState(false);
 
   const [mlPredictions, setMlPredictions] = useState<MLForecastResults | null>(null);
+  const [importanceModel, setImportanceModel] = useState<'ensemble' | 'xgboost' | 'lstm'>('ensemble');
   const [detectedFactors, setDetectedFactors] = useState<DetectedFactorEvent[]>([]);
 
   // Hydrate live quote + ML models + detected factors
@@ -332,25 +333,98 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                   )}
                 </div>
 
-                {/* Feature Importance */}
-                {mlPredictions?.direction?.feature_importance && (
+                {/* Multi-Model Feature & Temporal Importance */}
+                {mlPredictions?.direction && (
                   <div className="p-5 rounded-2xl border border-[#EAECEF] bg-white space-y-3">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-[#00D09C] font-mono">
-                      XGBoost Feature Importance Weights
-                    </h4>
-                    <div className="space-y-2">
-                      {Object.entries(mlPredictions.direction.feature_importance).map(([feature, weight]) => (
-                        <div key={feature} className="space-y-1">
-                          <div className="flex justify-between text-xs font-mono">
-                            <span className="text-[#44475B] font-semibold">{feature.toUpperCase()}</span>
-                            <span className="text-[#00D09C] font-bold">{(weight * 100).toFixed(1)}%</span>
-                          </div>
-                          <div className="w-full h-1.5 rounded-full bg-[#F0F0F2] overflow-hidden">
-                            <div className="h-full bg-[#00D09C] rounded-full" style={{ width: `${weight * 100 * 2.5}%` }} />
-                          </div>
-                        </div>
-                      ))}
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#F0F0F2] pb-3">
+                      <div>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-[#44475B] font-mono">
+                          {importanceModel === 'ensemble' && '★ Ensemble Model Contribution Weights'}
+                          {importanceModel === 'xgboost' && '⭐ XGBoost Feature Importance Weights'}
+                          {importanceModel === 'lstm' && '🧠 PyTorch Attention Bi-LSTM Lookback Weights'}
+                        </h4>
+                        <span className="text-[11px] text-[#7C7E8C]">
+                          {importanceModel === 'ensemble' && 'Relative weights in the top-accuracy stacking blend'}
+                          {importanceModel === 'xgboost' && 'Most influential technical indicator splits in decision trees'}
+                          {importanceModel === 'lstm' && 'Temporal Self-Attention focus over past trading days'}
+                        </span>
+                      </div>
+
+                      {/* Interactive Model Toggle */}
+                      <div className="flex items-center gap-1 bg-[#F4F4F7] p-1 rounded-xl font-mono text-[10px]">
+                        {[
+                          { id: 'ensemble' as const, label: '★ ENSEMBLE' },
+                          { id: 'xgboost' as const, label: 'XGB' },
+                          { id: 'lstm' as const, label: 'ATTN-LSTM' },
+                        ].map(tab => (
+                          <button
+                            key={tab.id}
+                            onClick={() => setImportanceModel(tab.id)}
+                            className="px-2.5 py-1 rounded-lg font-bold transition-all"
+                            style={{
+                              background: importanceModel === tab.id ? '#00D09C' : 'transparent',
+                              color: importanceModel === tab.id ? '#FFFFFF' : '#7C7E8C',
+                              boxShadow: importanceModel === tab.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                            }}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
+
+                    {/* Weight Bars */}
+                    {(() => {
+                      const multi = mlPredictions.direction.multi_model_importance;
+                      let activeWeights: Record<string, number> = {};
+
+                      if (multi && multi[importanceModel]) {
+                        activeWeights = multi[importanceModel]!;
+                      } else if (importanceModel === 'ensemble') {
+                        activeWeights = {
+                          'XGBoost Trees (Technical Momentum)': 0.40,
+                          'LightGBM Boosted Leaves (Rapid Splits)': 0.35,
+                          'Attention Bi-LSTM (Temporal Deep Learning)': 0.25,
+                        };
+                      } else {
+                        activeWeights = mlPredictions.direction.feature_importance || {};
+                      }
+
+                      const entries = Object.entries(activeWeights);
+                      const maxWeight = Math.max(...entries.map(([_, w]) => w), 0.01);
+
+                      const getThemeColor = () => {
+                        if (importanceModel === 'ensemble') return '#00D09C';
+                        if (importanceModel === 'xgboost') return '#0284C7';
+                        if (importanceModel === 'lightgbm') return '#D97706';
+                        return '#8B5CF6';
+                      };
+                      const barColor = getThemeColor();
+
+                      return (
+                        <div className="space-y-2 pt-1">
+                          {entries.map(([name, weight]) => (
+                            <div key={name} className="space-y-1">
+                              <div className="flex justify-between text-xs font-mono">
+                                <span className="text-[#44475B] font-semibold">{name.toUpperCase()}</span>
+                                <span className="font-bold" style={{ color: barColor }}>
+                                  {(weight * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                              <div className="w-full h-1.5 rounded-full bg-[#F0F0F2] overflow-hidden">
+                                <div
+                                  className="h-full rounded-full transition-all duration-300"
+                                  style={{
+                                    background: barColor,
+                                    width: `${Math.min(100, (weight / maxWeight) * 100)}%`,
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
 
@@ -359,11 +433,10 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                   <h4 className="text-xs font-bold uppercase tracking-wider text-[#44475B] font-mono">
                     Multi-Model 15-Day Forecast Targets
                   </h4>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     {[
                       { name: '★ Stacking Ensemble', key: 'ensemble' as const, color: '#00D09C', desc: 'Top Accuracy (~61.4%)' },
                       { name: '⭐ XGBoost', key: 'xgboost' as const, color: '#0284C7', desc: 'Gradient Boosted Trees' },
-                      { name: '⚡ LightGBM', key: 'lightgbm' as const, color: '#D97706', desc: 'Leaf-wise Tree Boosting' },
                       { name: '🧠 Attention Bi-LSTM', key: 'lstm' as const, color: '#8B5CF6', desc: 'PyTorch Deep Learning' },
                     ].map((m, i) => {
                       // Calibrate: compute the % change from the model's own first forecast

@@ -83,6 +83,12 @@ export interface MLDirectionPrediction {
   confidence: number;
   backtest_accuracy?: number | null;
   feature_importance?: Record<string, number>;
+  multi_model_importance?: {
+    ensemble?: Record<string, number>;
+    xgboost?: Record<string, number>;
+    lightgbm?: Record<string, number>;
+    lstm?: Record<string, number>;
+  };
   error?: string;
 }
 
