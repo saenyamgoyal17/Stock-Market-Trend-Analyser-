@@ -143,9 +143,32 @@ def fetch_stock_data(ticker: str, period: str = "1y", interval: str = None) -> d
     meta = get_currency_and_exchange(target_ticker, info)
 
     price_data = []
-    for _, row in hist.iterrows():
-        if pd.isna(row["Close"]) or float(row["Close"]) <= 0:
+    total_rows = len(hist)
+    for idx_row, (_, row) in enumerate(hist.iterrows()):
+        close_val = row["Close"]
+        open_val = row["Open"]
+        high_val = row["High"]
+        low_val = row["Low"]
+        vol_val = int(row["Volume"]) if pd.notna(row["Volume"]) else 0
+
+        # If last row (latest trading day) has unfinalized NaN, recover real trade prices from fast_info
+        if (pd.isna(close_val) or float(close_val) <= 0) and idx_row == total_rows - 1:
+            try:
+                f_lp = getattr(t.fast_info, "last_price", None) or info.get("regularMarketPrice") or info.get("currentPrice")
+                if f_lp and float(f_lp) > 0:
+                    close_val = float(f_lp)
+                    open_val = getattr(t.fast_info, "open", None) or open_val or close_val
+                    high_val = getattr(t.fast_info, "day_high", None) or high_val or close_val
+                    low_val = getattr(t.fast_info, "day_low", None) or low_val or close_val
+                    f_vol = getattr(t.fast_info, "last_volume", None)
+                    if f_vol and int(f_vol) > 0:
+                        vol_val = int(f_vol)
+            except Exception:
+                pass
+
+        if pd.isna(close_val) or float(close_val) <= 0:
             continue
+
         dt_val = row[date_col]
         try:
             epoch_ms = int(dt_val.timestamp() * 1000)
@@ -160,11 +183,11 @@ def fetch_stock_data(ticker: str, period: str = "1y", interval: str = None) -> d
             "time": epoch_ms,
             "date": row["date"],
             "isoDate": iso_str,
-            "open": round(float(row["Open"]), 2),
-            "high": round(float(row["High"]), 2),
-            "low": round(float(row["Low"]), 2),
-            "close": round(float(row["Close"]), 2),
-            "volume": int(row["Volume"]) if pd.notna(row["Volume"]) else 0,
+            "open": round(float(open_val if pd.notna(open_val) else close_val), 2),
+            "high": round(float(high_val if pd.notna(high_val) else close_val), 2),
+            "low": round(float(low_val if pd.notna(low_val) else close_val), 2),
+            "close": round(float(close_val), 2),
+            "volume": vol_val,
         })
 
     if not price_data:

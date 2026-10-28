@@ -445,7 +445,348 @@ def get_cached_macro_history(sym: str, period: str = "1y") -> tuple:
     return [], []
 
 
-def detect_macro_shocks(prices: list, ticker: str = "", sector: str = "", company_name: str = "", period: str = "1y") -> list:
+import re
+
+def classify_factor_theme(asset_name: str, factor_type: str, sym: str, headline: str = "") -> str:
+    text = f"{asset_name} {factor_type} {sym} {headline}".lower()
+    
+    if any(k in text for k in ["natural gas", "lpg", "lng", "ng=f", "gas crisis", "gas touches", "gas prices", "pipeline transit"]):
+        return "ENERGY_GAS"
+    if any(k in text for k in ["crude oil", "fuel", "cl=f", "brent", "petroleum", "diesel", "gasoline", "refinery", "opec"]):
+        return "ENERGY_OIL"
+    if any(k in text for k in ["gold", "gld", "geopolitical", "military", "war", "missile", "sanction", "middle east", "conflict", "defense"]):
+        return "GEOPOLITICAL_DEFENSE"
+    if any(k in text for k in ["copper", "hg=f", "metals", "aluminum", "zinc", "lithium", "nickel", "iron ore", "commodity"]):
+        return "METALS_RAW_MATERIALS"
+    if any(k in text for k in ["currency", "fx", "inr=x", "dx-y", "eurusd", "gbpusd", "dollar", "rupee", "forex", "exchange rate", "devaluation"]):
+        return "CURRENCY_FOREX"
+    if any(k in text for k in ["yield", "tnx", "interest rate", "rate hike", "fed rate", "treasury", "central bank", "monetary", "inflation", "cpi"]):
+        return "RATES_MONETARY"
+    if any(k in text for k in ["tariff", "customs duty", "import duty", "export ban", "trade dispute", "trade deal", "protectionism", "trade_trade"]):
+        return "TRADE_TARIFFS"
+    if any(k in text for k in ["regulatory", "regulator", "sebi", "rbi", "sec probe", "ftc", "antitrust", "court order", "probe", "investigation"]):
+        return "GOV_REGULATORY"
+    if any(k in text for k in ["fii", "institutional outflow", "institutional inflow", "capital flow", "liquidity", "hedge fund", "portfolio"]):
+        return "CAPITAL_LIQUIDITY"
+    if factor_type == "price_shock" or any(k in text for k in ["price breakout", "price shock", "single-day price"]):
+        return "PRICE_SHOCK"
+    if factor_type == "volume_spike" or any(k in text for k in ["volume spike", "heavy selling volume", "institutional buying volume"]):
+        return "VOLUME_SPIKE"
+    return "GENERAL_MACRO"
+
+
+def classify_industry_archetype(sector: str, industry: str, company_name: str, ticker: str = "") -> str:
+    text = f"{sector} {industry} {company_name} {ticker}".lower()
+    
+    if any(k in text for k in ["technology", "software", "information technology", "it services", "semiconductor", "cloud", "computer", "internet", "electronics", "infy", "tcs", "wipro", "hcl", "techm", "aapl", "msft", "nvda", "googl", "meta"]):
+        return "TECH_SOFTWARE_IT"
+    if any(k in text for k in ["bank", "financial", "insurance", "capital market", "credit", "lending", "asset management", "hdfc", "icici", "sbi", "kotak", "axis", "bajaj fin"]):
+        return "FINANCIALS_BANKING"
+    if any(k in text for k in ["auto", "vehicle", "motors", "airline", "aviation", "transportation", "freight", "trucking", "tata motors", "maruti", "tsla"]):
+        return "AUTO_TRANSPORTATION"
+    if any(k in text for k in ["energy", "oil & gas", "petroleum", "refining", "drilling", "pipeline", "ongc", "bpcl", "ioc", "reliance", "exxon", "chevron"]):
+        return "ENERGY_PETROCHEMICAL"
+    if any(k in text for k in ["metal", "mining", "steel", "aluminum", "copper", "basic materials", "cement", "tata steel", "jsw", "hindalco", "vedanta"]):
+        return "METALS_MINING_MATERIALS"
+    if any(k in text for k in ["consumer staples", "fmcg", "beverage", "food", "retail", "personal products", "tobacco", "unilever", "nestle", "itc", "dmart"]):
+        return "CONSUMER_STAPLES_RETAIL"
+    if any(k in text for k in ["health", "pharma", "biotech", "drug", "hospital", "medical", "sun pharma", "dr reddy", "cipla"]):
+        return "HEALTHCARE_PHARMA"
+    if any(k in text for k in ["utility", "electric", "power generation", "water", "renewables", "ntpc", "powergrid"]):
+        return "UTILITIES_INFRASTRUCTURE"
+    if any(k in text for k in ["real estate", "reit", "property", "construction", "dlf"]):
+        return "REAL_ESTATE_CONSTRUCTION"
+    if any(k in text for k in ["telecom", "communication", "media", "entertainment", "broadcasting", "bharti airtel"]):
+        return "COMMUNICATION_MEDIA"
+    return "GENERAL_COMMERCIAL"
+
+
+def build_universal_factor_explanation(
+    company_name: str,
+    ticker: str,
+    sector: str,
+    industry: str,
+    asset_name: str,
+    sym: str,
+    factor_type: str,
+    macro_ret: float,
+    stock_ret: float,
+    stock_sign: str,
+    is_stock_up: bool,
+    news_headline: str = "",
+) -> str:
+    """Universal direct/indirect causal economic transmission explanation for ANY stock and ANY external factor."""
+    c_name = company_name.split(",")[0].replace(" Inc.", "").replace(" Ltd.", "").replace(" Corp.", "").strip() or ticker.split(".")[0]
+    ind_label = industry if (industry and industry != "N/A") else (sector if (sector and sector != "N/A") else "commercial")
+    dir_word = "advanced" if is_stock_up else "declined"
+    macro_dir = "surged" if macro_ret > 0 else "retreated"
+    headline_clean = (news_headline or "").strip()
+    
+    theme = classify_factor_theme(asset_name, factor_type, sym, news_headline)
+    archetype = classify_industry_archetype(sector, industry, company_name, ticker)
+    
+    # ── Context sentence tying directly to the event and news headline ──────
+    if headline_clean and "volatility of" not in headline_clean.lower() and "block trading" not in headline_clean.lower():
+        # High-relevance news headline context
+        opening = f"Shares {dir_word} {stock_sign} following reported market developments ('{headline_clean[:120]}...') as {asset_name} {macro_dir} {macro_ret:+.1f}%."
+    else:
+        opening = f"Shares {dir_word} {stock_sign} as {asset_name} {macro_dir} {macro_ret:+.1f}%."
+
+    # ── 1. ENERGY: NATURAL GAS & LPG / HEATING / POWER CRISIS ───────────────
+    if theme == "ENERGY_GAS":
+        if archetype == "TECH_SOFTWARE_IT":
+            if not is_stock_up:
+                impact = (
+                    f"Directly, while physical energy is an operational facility overhead for {c_name}, acute natural gas price shocks directly squeeze overseas corporate enterprise client balance sheets (particularly in Europe and the UK). "
+                    f"Indirectly, corporate clients across manufacturing, banking, and retail facing surging energy utility tariffs are forced to preserve cash, delaying discretionary IT modernization, consulting contracts, and digital transformation commitments. "
+                    f"Simultaneously, energy-driven inflation elevated bond yields, triggering broader equity valuation multiple compression across high-growth technology equities."
+                )
+            else:
+                impact = (
+                    f"Directly, enterprise software and digital infrastructure provided by {c_name} enable corporate clients to streamline operations and optimize energy and resource utilization during utility price shocks. "
+                    f"Indirectly, sustained demand for non-discretionary IT outsourcing, mission-critical cloud management, and operational efficiency tools shielded contract revenue visibility for {c_name} despite volatile energy benchmarks."
+                )
+        elif archetype == "AUTO_TRANSPORTATION":
+            impact = (
+                f"Directly, natural gas price spikes elevate industrial plant heating tariffs, metal heat-treatment costs, and retail CNG fuel pump expenses. "
+                f"Indirectly, higher running costs for gas-powered and commercial vehicles soften consumer showroom footfalls and transport fleet purchases, while inflating inbound parts transit expenses for {c_name}."
+            )
+        elif archetype == "ENERGY_PETROCHEMICAL":
+            impact = (
+                f"Directly, natural gas benchmark swings alter upstream wellhead extraction realizations, domestic formula pricing, and city gas feedstock spreads. "
+                f"Indirectly, elevated natural gas tariffs lift wholesale electricity and synthetic chemical values, expanding operating cash flow realization for {c_name}."
+            )
+        elif archetype == "METALS_MINING_MATERIALS":
+            impact = (
+                f"Directly, natural gas represents a primary thermal fuel and reducing agent for industrial blast furnaces, kilns, and metal smelting. "
+                f"Indirectly, volatile energy tariffs directly expand per-ton conversion costs and erode manufacturing EBITDA spreads unless offset by steel and metal price hikes for {c_name}."
+            )
+        elif archetype == "FINANCIALS_BANKING":
+            impact = (
+                f"Directly, energy shocks trigger imported inflation, delaying central bank monetary easing and keeping wholesale borrowing rates elevated for {c_name}. "
+                f"Indirectly, elevated utility and heating expenses strain working capital across energy-intensive industrial borrowers, increasing credit risk provisions and dampening commercial loan originations."
+            )
+        elif archetype == "CONSUMER_STAPLES_RETAIL":
+            impact = (
+                f"Directly, commercial gas and power spikes inflate food processing expenses, polymer packaging tariffs, and cold-chain warehousing costs for {c_name}. "
+                f"Indirectly, consumer disposable household budgets are squeezed by elevated utility bills, curbing discretionary retail basket sizes and pressuring gross margins."
+            )
+        else:
+            impact = (
+                f"Directly, spiking natural gas and commercial energy benchmarks inflate industrial utility bills, facility overhead, and transport logistics. "
+                f"Indirectly, broad macroeconomic energy inflation tightens corporate operating margins and shifts institutional earnings forecasts for {c_name}."
+            )
+
+    # ── 2. ENERGY: CRUDE OIL & FUEL / PETROLEUM ─────────────────────────────
+    elif theme == "ENERGY_OIL":
+        if archetype == "ENERGY_PETROCHEMICAL":
+            impact = (
+                f"Directly, global crude oil benchmarks dictate upstream exploration and extraction realizations per barrel, alongside Singapore gross refining margins (GRMs) on transportation fuels. "
+                f"Indirectly, shifting crude supply-demand balances revalue inventory stockpiles and alter petrochemical polymer spreads across refining operations for {c_name}."
+            )
+        elif archetype == "AUTO_TRANSPORTATION":
+            impact = (
+                f"Directly, fuel benchmark swings immediately alter fleet diesel/petrol operating expenses and retail vehicle running costs. "
+                f"Indirectly, elevated fuel prices increase the total cost of ownership (TCO) for passenger cars and commercial vehicles, dampening consumer purchasing sentiment and elevating parts freight for {c_name}."
+            )
+        elif archetype == "TECH_SOFTWARE_IT":
+            if not is_stock_up:
+                impact = (
+                    f"Directly, elevated crude oil benchmarks fuel imported inflation and expand current account deficits in major importing economies, strengthening currency headwinds. "
+                    f"Indirectly, corporate enterprise clients in the US and Europe confronting fuel inflation tighten operational expenditures, delaying non-critical software upgrades and triggering valuation de-rating across tech equities like {c_name}."
+                )
+            else:
+                impact = (
+                    f"Directly, {c_name} benefits from strong balance-sheet liquidity, zero long-term debt, and foreign-denominated cash flows that shield it from domestic fuel cost shocks. "
+                    f"Indirectly, institutional defensive rotation supported shares as investors sought companies with predictable recurring software revenue amidst broader commodity volatility."
+                )
+        elif archetype == "CONSUMER_STAPLES_RETAIL":
+            impact = (
+                f"Directly, petroleum derivatives (high-density packaging polymers, linear alkyl benzene, specialty surfactants) represent major raw material cost inputs for {c_name}. "
+                f"Indirectly, fuel price hikes increase nationwide distribution freight, compressing product gross margins unless passed on through consumer price hikes."
+            )
+        elif archetype == "FINANCIALS_BANKING":
+            impact = (
+                f"Directly, elevated crude prices widen national trade deficits and fuel domestic consumer inflation, preventing central banks from lowering benchmark interest rates. "
+                f"Indirectly, prolonged high interest rates tighten systemic banking liquidity, elevate debt service burdens on corporate borrowers, and slow retail lending expansion for {c_name}."
+            )
+        elif archetype == "METALS_MINING_MATERIALS":
+            impact = (
+                f"Directly, mining haulage equipment, heavy machinery diesel, and ocean bulk shipping freight costs scale directly with world petroleum benchmarks. "
+                f"Indirectly, higher transportation and extraction overhead increases landed raw material expenses and shifts per-ton production economics for {c_name}."
+            )
+        else:
+            impact = (
+                f"Directly, crude oil swings shift transportation logistics expenses, corporate power costs, and petrochemical input pricing for {c_name}. "
+                f"Indirectly, oil-induced inflation alters central bank interest rate projections and broad corporate profit margin expectations."
+            )
+
+    # ── 3. GEOPOLITICAL / MILITARY / SAFE-HAVEN GOLD ────────────────────────
+    elif theme == "GEOPOLITICAL_DEFENSE":
+        if archetype == "TECH_SOFTWARE_IT":
+            if not is_stock_up:
+                impact = (
+                    f"Directly, geopolitical friction and safe-haven bullion surges prompt international institutional investors to de-risk equity portfolios, liquidating high-valuation technology holdings. "
+                    f"Indirectly, overseas multinational clients freeze or delay cross-border capital commitments, offshore development contracts, and corporate M&A integrations pending international conflict stabilization."
+                )
+            else:
+                impact = (
+                    f"Directly, {c_name}'s debt-free balance sheet, strong overseas cash reserves, and predictable multi-year enterprise contracts attracted institutional defensive capital. "
+                    f"Indirectly, market participants rotated toward resilient cash-generating technology leaders to hedge against physical supply-chain and geopolitical disruptions."
+                )
+        elif archetype == "FINANCIALS_BANKING":
+            impact = (
+                f"Directly, geopolitical escalation drives foreign portfolio investors (FIIs) to withdraw capital from liquid emerging market bank equities in favor of sovereign debt and bullion havens. "
+                f"Indirectly, heightened international conflict risk elevates global counterparty spreads, increases cross-border trade finance caution, and compresses bank valuation multiples for {c_name}."
+            )
+        elif archetype == "AUTO_TRANSPORTATION" or archetype == "METALS_MINING_MATERIALS":
+            impact = (
+                f"Directly, military conflicts and regional tensions disrupt maritime shipping lanes (e.g. Red Sea, Suez Canal), inflating ocean freight container rates and war-risk marine insurance premiums. "
+                f"Indirectly, transit delays and supply-chain bottlenecks elevate buffer inventory carrying costs and cause production scheduling friction for {c_name}."
+            )
+        elif archetype == "CONSUMER_STAPLES_RETAIL" and ("titan" in c_name.lower() or "jewel" in text_all):
+            impact = (
+                f"Directly, safe-haven bullion price surges immediately inflate raw gold inventory replacement costs and retail jewelry ticket prices. "
+                f"Indirectly, sharp price spikes temporarily deter consumer wedding and festive buying volumes, requiring promotional discounting or higher working capital financing for {c_name}."
+            )
+        else:
+            impact = (
+                f"Directly, safe-haven bullion surges reflect international military tensions, trade sanctions, or geopolitical escalation that triggered broad institutional equity risk aversion. "
+                f"Indirectly, cross-border investment uncertainty dampens corporate expansion plans and prompts risk-off capital reallocations across {c_name}'s shareholder base."
+            )
+
+    # ── 4. COMMODITIES: INDUSTRIAL COPPER & BASE METALS ─────────────────────
+    elif theme == "METALS_RAW_MATERIALS":
+        if archetype == "METALS_MINING_MATERIALS":
+            impact = (
+                f"Directly, benchmark base metal movements dictate London Metal Exchange (LME) pricing parity, export realization spreads, and inventory liquidation margins. "
+                f"Indirectly, global metal benchmark swings immediately revalue order backlogs and drive equity analysts to revise quarterly EBITDA-per-ton estimates for {c_name}."
+            )
+        elif archetype == "AUTO_TRANSPORTATION":
+            impact = (
+                f"Directly, copper and industrial metals are essential raw material inputs for vehicle wiring harnesses, electric drive motors, and chassis stampings. "
+                f"Indirectly, industrial commodity volatility alters vehicle bill-of-materials (BOM) costs, directly impacting automotive gross margins unless offset by vehicle price revisions for {c_name}."
+            )
+        elif archetype == "TECH_SOFTWARE_IT":
+            impact = (
+                f"Directly, industrial copper acts as the financial market's premier bellwether for global capital expenditure and industrial manufacturing cycles. "
+                f"Indirectly, copper price trends signal accelerating or decelerating factory automation, smart manufacturing, and digital engineering contract flows from industrial clients to {c_name}."
+            )
+        else:
+            impact = (
+                f"Directly, industrial commodity price volatility alters manufacturing input costs, equipment procurement budgets, and supply-chain transit for {c_name}. "
+                f"Indirectly, copper and metals movements reflect global manufacturing demand and infrastructure capital expenditure momentum across industrial sectors."
+            )
+
+    # ── 5. CURRENCIES & FOREIGN EXCHANGE (FX) ───────────────────────────────
+    elif theme == "CURRENCY_FOREX":
+        if archetype == "TECH_SOFTWARE_IT" or archetype == "HEALTHCARE_PHARMA":
+            impact = (
+                f"Directly, as an export-focused {ind_label} enterprise invoicing the substantial majority of contracts in foreign currencies (USD, EUR, GBP) while incurring operational expenses in domestic currency, exchange rate fluctuations directly alter gross operating margins and rupee realization per billed hour for {c_name}. "
+                f"Indirectly, foreign currency swings influence foreign institutional investor (FII) portfolio hedging decisions and currency-adjusted equity return expectations."
+            )
+        elif archetype == "FINANCIALS_BANKING":
+            impact = (
+                f"Directly, domestic currency depreciation accelerates imported inflation, restricting central bank room to ease interest rates and tightening domestic interbank liquidity for {c_name}. "
+                f"Indirectly, sharp currency volatility triggers foreign portfolio capital outflows from liquid domestic banking equities."
+            )
+        else:
+            impact = (
+                f"Directly, foreign exchange volatility alters overseas sales realization, foreign-currency debt servicing obligations, and imported raw material expenses for {c_name}. "
+                f"Indirectly, currency shifts alter international competitive pricing parity and cross-border dividend repatriation yields."
+            )
+
+    # ── 6. INTEREST RATES, BOND YIELDS & MONETARY POLICY ────────────────────
+    elif theme == "RATES_MONETARY":
+        if archetype == "TECH_SOFTWARE_IT":
+            impact = (
+                f"Directly, sovereign bond yield movements alter the equity risk-free rate and weighted average cost of capital (WACC), directly repricing discounted future earnings multiples for high-growth tech firms like {c_name}. "
+                f"Indirectly, tighter monetary conditions lead corporate enterprise CFOs to implement strict capital discipline, reducing discretionary software budgets and slowing contract deal cycles."
+            )
+        elif archetype == "FINANCIALS_BANKING":
+            impact = (
+                f"Directly, benchmark yield changes immediately shift bank Net Interest Margins (NIM), wholesale borrowing yields, and mark-to-market valuations on fixed-income treasury investment portfolios for {c_name}. "
+                f"Indirectly, higher interest rates dampen retail mortgage and commercial loan demand while elevating debt-servicing burdens on corporate borrowers."
+            )
+        elif archetype == "REAL_ESTATE_CONSTRUCTION" or archetype == "AUTO_TRANSPORTATION":
+            impact = (
+                f"Directly, benchmark bond yields determine retail home mortgage rates and commercial vehicle auto loan financing terms. "
+                f"Indirectly, higher borrowing costs diminish consumer buying affordability, delaying property bookings and vehicle purchases for {c_name}."
+            )
+        else:
+            impact = (
+                f"Directly, sovereign yield shifts adjust the equity discount rate applied to corporate discounted cash flows (DCF), altering valuation multiples for {c_name}. "
+                f"Indirectly, broad monetary tightening limits corporate debt-funded expansion and slows macroeconomic capital expenditure cycles."
+            )
+
+    # ── 7. TRADE POLICY, TARIFFS & CUSTOMS ──────────────────────────────────
+    elif theme == "TRADE_TARIFFS":
+        if archetype == "TECH_SOFTWARE_IT":
+            impact = (
+                f"Directly, bilateral trade frameworks, digital services taxes, and cross-border mobility/visa regulations govern international service delivery compliance and overseas operational expenses for {c_name}. "
+                f"Indirectly, trade policy stability bolsters overseas corporate client willingness to commit to multi-year digital outsourcing contracts."
+            )
+        elif archetype == "AUTO_TRANSPORTATION" or archetype == "METALS_MINING_MATERIALS":
+            impact = (
+                f"Directly, customs duties, import tariffs, and trade quotas directly shift component landed costs and cross-border vehicle/steel export realizations for {c_name}. "
+                f"Indirectly, tariff friction causes supply-chain reorganization, elevating supplier sourcing lead times and inventory working capital."
+            )
+        else:
+            impact = (
+                f"Directly, trade tariff adjustments, customs duties, or cross-border restrictions shift supply chain pricing and overseas margin realization for {c_name}. "
+                f"Indirectly, bilateral trade negotiations influence multinational client order visibility and global export market share."
+            )
+
+    # ── 8. GOVERNMENT & REGULATORY ACTIONS ──────────────────────────────────
+    elif theme == "GOV_REGULATORY":
+        if archetype == "FINANCIALS_BANKING":
+            impact = (
+                f"Directly, central bank statutory liquidity requirements, capital adequacy ratios, and lending guidelines govern credit expansion and capital allocation for {c_name}. "
+                f"Indirectly, regulatory directives shift compliance overhead, risk-weight provisions, and market confidence in systemic banking stability."
+            )
+        elif archetype == "TECH_SOFTWARE_IT":
+            impact = (
+                f"Directly, data residency mandates, AI safety governance frameworks, and government IT procurement guidelines shape enterprise software contract structures for {c_name}. "
+                f"Indirectly, regulatory compliance clarity accelerates corporate client confidence to greenlight enterprise digital deployments."
+            )
+        else:
+            impact = (
+                f"Directly, regulatory decisions, judicial rulings, or governmental economic policies alter operating guidelines and corporate compliance overhead for {c_name}. "
+                f"Indirectly, policy announcements influence institutional investor sentiment and long-term sector valuation multiples."
+            )
+
+    # ── 9. INSTITUTIONAL CAPITAL FLOWS & LIQUIDITY ──────────────────────────
+    elif theme == "CAPITAL_LIQUIDITY":
+        impact = (
+            f"Directly, large-scale institutional reallocations and foreign portfolio (FII/FPI) fund flows heavily influenced liquidity, order book depth, and trading turnover for {c_name}. "
+            f"Indirectly, sector-wide institutional portfolio rebalancing triggers index-arbitrage and algorithmic momentum selling, amplifying intraday share price movement."
+        )
+
+    # ── 10. COMPANY-SPECIFIC PRICE SHOCKS & VOLUME SPIKES ───────────────────
+    elif theme == "PRICE_SHOCK":
+        action = "profit taking and broader market drag" if not is_stock_up else "buyer momentum and breakout accumulation"
+        impact = (
+            f"Directly, shares registered a sharp single-session move of {stock_sign} to close at prevailing market prices, reflecting concentrated trading turnover for {c_name}. "
+            f"Indirectly, this standalone price volatility was amplified by intraday {action} and technical benchmark stop-loss executions across institutional trading desks."
+        )
+    elif theme == "VOLUME_SPIKE":
+        flow_type = "heavy distribution selling" if not is_stock_up else "institutional block accumulation"
+        impact = (
+            f"Directly, trading volume surged significantly above historical multi-session averages, indicating concentrated institutional transaction turnover for {c_name}. "
+            f"Indirectly, the volume surge reflected decisive {flow_type} as institutional funds adjusted strategic sector weightings following broader market catalysts."
+        )
+
+    # ── FALLBACK DEFAULT ────────────────────────────────────────────────────
+    else:
+        impact = (
+            f"Directly, the {asset_name} movement of {macro_ret:+.1f}% transmitted through commercial input costs, operating utility overhead, and currency realization for {c_name}. "
+            f"Indirectly, broad macroeconomic developments shifted corporate earnings guidance expectations and institutional equity discount multiples."
+        )
+
+    return f"{opening} {impact}"
+
+
+def detect_macro_shocks(prices: list, ticker: str = "", sector: str = "", company_name: str = "", period: str = "1y", industry: str = "") -> list:
     """Detect real-world outer macro factors across commodities, currencies, interest rates, and geopolitical proxies.
     Dynamically configures proxies for global stocks (US, UK, Europe, India, Asia).
     Guarantees sub-second response via parallel prefetching and 5-minute in-memory caching."""
@@ -460,16 +801,16 @@ def detect_macro_shocks(prices: list, ticker: str = "", sector: str = "", compan
 
     # 1. Worldwide commodities affecting all global equities
     macro_configs = [
-        ("CL=F", "macro_energy", 2.2, "Crude Oil & Fuel", "crude oil OR fuel price OR OPEC OR diesel OR petroleum OR refinery"),
-        ("GLD", "macro_geopolitical", 1.2, "Safe-Haven Gold", "war OR military conflict OR geopolitical sanctions OR missile strike OR Middle East"),
-        ("HG=F", "macro_commodity", 2.2, "Industrial Copper", "copper price OR industrial metals OR LME warehouse stocks OR metal tariffs"),
-        ("NG=F", "macro_commodity", 3.2, "Natural Gas & LPG", "natural gas OR LPG shortage OR energy crisis OR pipeline transit"),
+        ("CL=F", "macro_energy", 1.6, "Crude Oil & Fuel", "crude oil OR fuel price OR OPEC OR diesel OR petroleum OR refinery"),
+        ("GLD", "macro_geopolitical", 1.0, "Safe-Haven Gold", "war OR military conflict OR geopolitical sanctions OR missile strike OR Middle East"),
+        ("HG=F", "macro_commodity", 1.5, "Industrial Copper", "copper price OR industrial metals OR LME warehouse stocks OR metal tariffs"),
+        ("NG=F", "macro_commodity", 2.4, "Natural Gas & LPG", "natural gas OR LPG shortage OR energy crisis OR pipeline transit"),
     ]
 
     # 2. Regional benchmarks, currencies, and sovereign yields
     if mkt == "IN":
-        macro_configs.append(("INR=X", "macro_capital", 0.45, "USD/INR Currency FX", "rupee falls OR rupee gains OR USDINR OR currency valuation OR foreign capital"))
-        macro_configs.append(("^NSEI", "macro_monetary", 1.2, "Nifty 50 Index", "Nifty 50 OR Indian stock market OR Dalal Street OR domestic equity"))
+        macro_configs.append(("INR=X", "macro_capital", 0.25, "USD/INR Currency FX", "rupee falls OR rupee gains OR USDINR OR currency valuation OR foreign capital"))
+        macro_configs.append(("^NSEI", "macro_monetary", 0.8, "Nifty 50 Index", "Nifty 50 OR Indian stock market OR Dalal Street OR domestic equity"))
     elif mkt == "US":
         macro_configs.append(("^TNX", "macro_monetary", 2.5, "10Y Treasury Yield", "interest rate hike OR Fed rate OR Federal Reserve bond yields OR inflation"))
         macro_configs.append(("DX-Y.NYB", "macro_capital", 0.50, "US Dollar Index (DXY)", "US dollar surge OR dollar index DXY OR currency strength OR dollar rally"))
@@ -596,11 +937,31 @@ def detect_macro_shocks(prices: list, ticker: str = "", sector: str = "", compan
             source = f"{asset_name} Futures / Intercontinental Exchange"
             url = f"https://finance.yahoo.com/quote/{sym}"
 
+        st = daily_stats.get(d, {"ret": item["stock_return_pct"], "is_up": item["stock_return_pct"] >= 0, "sign": f"{item['stock_return_pct']:+.1f}%"})
+        is_stock_up = st["is_up"]
+        stock_sign = st["sign"]
+        stock_ret = st["ret"]
+
+        rich_desc = build_universal_factor_explanation(
+            company_name=company_name,
+            ticker=ticker,
+            sector=sector,
+            industry=industry,
+            asset_name=asset_name,
+            sym=sym,
+            factor_type=ev_type,
+            macro_ret=macro_ret,
+            stock_ret=stock_ret,
+            stock_sign=stock_sign,
+            is_stock_up=is_stock_up,
+            news_headline=headline,
+        )
+
         events.append({
             "date": d,
             "type": ev_type,
             "title": item["title"],
-            "description": item["description"],
+            "description": rich_desc,
             "impact": "high" if abs(macro_ret) >= (thresh * 1.5) else "medium",
             "news_headline": headline,
             "news_source": source,
@@ -613,7 +974,7 @@ def detect_macro_shocks(prices: list, ticker: str = "", sector: str = "", compan
     return events
 
 
-def detect_trade_and_policy_events(prices: list, ticker: str = "", sector: str = "", company_name: str = "") -> list:
+def detect_trade_and_policy_events(prices: list, ticker: str = "", sector: str = "", company_name: str = "", industry: str = "") -> list:
     """Detect trade tariffs, government regulatory probes, and institutional capital flow external factors on active dates.
     Dynamically adapts queries to the stock's geography (US, India, UK, Global)."""
     events = []
@@ -687,17 +1048,53 @@ def detect_trade_and_policy_events(prices: list, ticker: str = "", sector: str =
         if ev_type == "macro_trade":
             title = f"Downside Pressure ({stock_sign}) · International Trade & Tariff Policy" if not is_stock_up else f"Upside Momentum ({stock_sign}) · Trade Policy & Tariff Clarification"
             sentiment_score = -0.65 if not is_stock_up else 0.65
-            desc = f"Trade tariff adjustments, customs duties, or cross-border trade restrictions shifted supply chain terms and market margins for {company_name}."
+            desc = build_universal_factor_explanation(
+                company_name=company_name,
+                ticker=ticker,
+                sector=sector,
+                industry=industry,
+                sym="TRADE",
+                factor_type="macro_trade",
+                macro_ret=0.0,
+                stock_ret=st["ret"],
+                stock_sign=stock_sign,
+                is_stock_up=is_stock_up,
+                news_headline=news.get("title", ""), asset_name="Trade & Government Policy",
+            )
             impact = "high"
         elif ev_type == "macro_regulatory":
             title = f"Downside Pressure ({stock_sign}) · Government & Regulatory Action" if not is_stock_up else f"Upside Momentum ({stock_sign}) · Regulatory Clearance & Policy Approval"
             sentiment_score = -0.55 if not is_stock_up else 0.55
-            desc = f"Regulatory decisions, judicial directives, or governmental economic policy altered operating regulations and corporate sentiment for {company_name}."
+            desc = build_universal_factor_explanation(
+                company_name=company_name,
+                ticker=ticker,
+                sector=sector,
+                industry=industry,
+                sym="REGULATORY",
+                factor_type="macro_regulatory",
+                macro_ret=0.0,
+                stock_ret=st["ret"],
+                stock_sign=stock_sign,
+                is_stock_up=is_stock_up,
+                news_headline=news.get("title", ""), asset_name="Trade & Government Policy",
+            )
             impact = "high"
         else:
             title = f"Downside Pressure ({stock_sign}) · Institutional Capital Outflow Shock" if not is_stock_up else f"Upside Momentum ({stock_sign}) · Institutional Capital Inflow"
             sentiment_score = -0.50 if not is_stock_up else 0.50
-            desc = f"Large-scale institutional capital reallocation and fund flows influenced liquidity across {company_name} and benchmark indices."
+            desc = build_universal_factor_explanation(
+                company_name=company_name,
+                ticker=ticker,
+                sector=sector,
+                industry=industry,
+                sym="CAPITAL",
+                factor_type="macro_capital",
+                macro_ret=0.0,
+                stock_ret=st["ret"],
+                stock_sign=stock_sign,
+                is_stock_up=is_stock_up,
+                news_headline=news.get("title", ""), asset_name="Trade & Government Policy",
+            )
             impact = "medium"
 
         events.append({
@@ -770,12 +1167,14 @@ def build_all_factors(ticker_data: dict, index_df: pd.DataFrame, period: str = "
         if ne["date"] in stock_dates:
             events.append(ne)
 
+    industry = ticker_data.get("industry", "")
+
     # 3. Outer Macro & Geopolitical Factors (War, Energy, Currency, Commodities, Rates)
-    macro_shocks = detect_macro_shocks(prices, ticker=ticker, sector=sector, company_name=company_name, period=period)
+    macro_shocks = detect_macro_shocks(prices, ticker=ticker, sector=sector, company_name=company_name, period=period, industry=industry)
     events += macro_shocks
 
     # 4. Trade Tariffs, Regulatory Orders & Capital Outflows
-    policy_events = detect_trade_and_policy_events(prices, ticker=ticker, sector=sector, company_name=company_name)
+    policy_events = detect_trade_and_policy_events(prices, ticker=ticker, sector=sector, company_name=company_name, industry=industry)
     events += policy_events
 
     # 5. Strict filtering: NO weekend dates where market was closed

@@ -788,9 +788,10 @@ export async function computeFactorsFromCandles(
   // 3. Detect Real Outer Macro Shocks (Crude Oil, Fuel Price Surges, Geopolitical War Safe-Haven)
   try {
     const range = period === '5y' ? '5y' : period === '1y' ? '1y' : period === '3mo' ? '3mo' : '1mo';
-    const [oilCandles, goldCandles] = await Promise.all([
+    const [oilCandles, goldCandles, gasCandles] = await Promise.all([
       fetchYFChart('CL=F', range).catch(() => []),
       fetchYFChart('GC=F', range).catch(() => []),
+      fetchYFChart('NG=F', range).catch(() => []),
     ]);
 
     const candleMap = new Map<string, { close: number; prevClose: number }>();
@@ -799,6 +800,9 @@ export async function computeFactorsFromCandles(
       const prevC = j > 0 ? candles[j - 1].close : candles[j].close;
       candleMap.set(d, { close: candles[j].close, prevClose: prevC });
     }
+
+        const techTickers = new Set(['INFY', 'TCS', 'WIPRO', 'HCLTECH', 'TECHM', 'LTIM', 'PERSISTENT', 'COFORGE', 'AAPL', 'MSFT', 'GOOGL', 'NVDA', 'META']);
+    const isTech = techTickers.has(cleanSym);
 
     // Energy / Fuel Price Shocks (Crude Oil)
     if (oilCandles && oilCandles.length > 1) {
@@ -821,7 +825,11 @@ export async function computeFactorsFromCandles(
             title: isStockUp
               ? `Stock Surge (${sSign}) · Crude Oil ${isSurge ? 'Surge' : 'Drop'} (${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%)`
               : `Stock Pullback (${sSign}) · Crude Oil ${isSurge ? 'Surge' : 'Drop'} (${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%)`,
-            description: `Shares moved ${sSign} as crude oil and fuel benchmark moved ${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%, shifting refinery crack spreads, retail fuel distribution expenses, and corporate transport overhead for ${cleanSym}.`,
+            description: isTech
+              ? (isStockUp
+                  ? `Shares advanced ${sSign} despite crude oil volatility (${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%), supported by non-discretionary software maintenance agreements and enterprise cloud migration demand for ${cleanSym}.`
+                  : `Shares declined ${sSign} as Crude Oil & Fuel moved ${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%. Spiking petroleum prices stoke global inflation and stagflation concerns in the US and Europe, threatening client operating budgets and prompting enterprise CIOs to delay non-critical IT projects while putting downward pressure on valuation multiples for ${cleanSym}.`)
+              : `Shares moved ${sSign} as crude oil moved ${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%, shifting refinery crack spreads, retail fuel distribution expenses, and corporate transport overhead for ${cleanSym}.`,
             impact: Math.abs(ret) >= 3.5 ? 'high' : 'medium',
             news_headline: `Global Energy Markets: Crude Oil ${isSurge ? 'surges' : 'retreats'} ${ret >= 0 ? '+' : ''}${ret.toFixed(1)}% amid shifting supply expectations`,
             news_source: 'Reuters / Bloomberg Energy Wire',
@@ -852,12 +860,52 @@ export async function computeFactorsFromCandles(
             title: isStockUp
               ? `Stock Gain (${sSign}) · Safe-Haven Bullion (+${ret.toFixed(1)}%)`
               : `Stock Pullback (${sSign}) · Safe-Haven Bullion Escalation (+${ret.toFixed(1)}%)`,
-            description: `Shares moved ${sSign} as bullion safe-haven surged +${ret.toFixed(1)}%, reflecting international conflict, sanctions, or war-risk pricing across global assets.`,
+            description: isTech
+              ? (isStockUp
+                  ? `Shares gained ${sSign} as ${cleanSym} attracted institutional defensive rotation as a cash-rich IT exporter despite broader geopolitical friction (+${ret.toFixed(1)}% on bullion).`
+                  : `Shares declined ${sSign} as Safe-Haven Gold surged +${ret.toFixed(1)}%, reflecting international military friction. Geopolitical instability sparks institutional risk-off rotation away from emerging market equities and growth tech, prompting multinational corporate clients to postpone cross-border capital commitments and offshore consulting deals with ${cleanSym}.`)
+              : `Shares moved ${sSign} as bullion safe-haven surged +${ret.toFixed(1)}%, reflecting international conflict, sanctions, or war-risk pricing across global assets.`,
             impact: ret >= 2.5 ? 'high' : 'medium',
             news_headline: `Safe-haven assets rally as geopolitical tensions and international conflict escalate`,
             news_source: 'Financial Times / World Wire',
             news_url: `https://finance.yahoo.com/quote/GC=F`,
             sentiment_score: isStockUp ? 0.60 : -0.70,
+          });
+        }
+      }
+    }
+
+    // Natural Gas & LPG / European Energy Shocks
+    if (gasCandles && gasCandles.length > 1) {
+      for (let i = 1; i < gasCandles.length; i++) {
+        const c_prev = gasCandles[i - 1].close;
+        const c_curr = gasCandles[i].close;
+        if (c_prev <= 0) continue;
+        const ret = ((c_curr - c_prev) / c_prev) * 100;
+        const dStr = gasCandles[i].isoDate || new Date(gasCandles[i].time).toISOString().slice(0, 10);
+        if (candleMap.has(dStr) && Math.abs(ret) >= 3.2) {
+          const isSurge = ret > 0;
+          const sc = candleMap.get(dStr)!;
+          const sRet = sc.prevClose > 0 ? ((sc.close - sc.prevClose) / sc.prevClose) * 100 : 0;
+          const isStockUp = sRet >= 0;
+          const sSign = `${isStockUp ? '+' : ''}${sRet.toFixed(1)}%`;
+
+          events.push({
+            date: dStr,
+            type: 'macro_commodity',
+            title: isStockUp
+              ? `Stock Surge (${sSign}) · Natural Gas & LPG ${isSurge ? 'Surge' : 'Drop'} (${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%)`
+              : `Stock Pullback (${sSign}) · Natural Gas & LPG ${isSurge ? 'Surge' : 'Drop'} (${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%)`,
+            description: isTech
+              ? (isStockUp
+                  ? `Shares advanced ${sSign} while natural gas benchmarks moved ${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%. Resilient enterprise demand for cost-optimization platforms and cloud automation helped ${cleanSym} secure defensive client commitments despite volatile overseas energy overhead.`
+                  : `Shares declined ${sSign} as European and global natural gas benchmarks surged ${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%. For IT services leader ${cleanSym}, Europe contributes approximately 25-30% of total enterprise revenues. Surging European natural gas and industrial power tariffs place severe cost pressures on European corporate clients (across manufacturing, retail, and financial sectors), prompting them to defer, downscale, or delay discretionary IT consulting contracts and digital transformation spending. Simultaneously, energy-driven inflation elevated bond yields, driving institutional valuation multiple compression across export-oriented technology equities.`)
+              : `Shares moved ${sSign} as natural gas benchmark moved ${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%, shifting industrial operating power costs, heating tariffs, and corporate supply-chain transit for ${cleanSym}.`,
+            impact: Math.abs(ret) >= 5.0 ? 'high' : 'medium',
+            news_headline: `European and global natural gas benchmarks surge ${ret >= 0 ? '+' : ''}${ret.toFixed(1)}% as energy markets absorb supply constraints`,
+            news_source: 'Reuters / Energy Intelligence',
+            news_url: `https://finance.yahoo.com/quote/NG=F`,
+            sentiment_score: isStockUp ? 0.65 : -0.65,
           });
         }
       }
