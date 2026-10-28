@@ -519,14 +519,11 @@ def predict_direction(prices: list) -> dict:
 
 
 def run_all_forecasts(prices: list, horizon: int = 15) -> dict:
-    """Run all forecasting models including the top-performing Hybrid Stacking Ensemble."""
+    """Run the core production models: Stacking Ensemble, XGBoost, LightGBM, Attention Bi-LSTM & Direction Classifier."""
     ensemble_fc = forecast_ensemble(prices, horizon)
     xgb_fc = forecast_xgboost(prices, horizon)
     lgb_fc = forecast_lightgbm(prices, horizon)
     lstm_fc = forecast_lstm(prices, horizon)
-    cat_fc = forecast_catboost(prices, horizon)
-    arima = forecast_arima(prices, horizon)
-    prophet = forecast_prophet(prices, horizon)
     direction = predict_direction(prices)
 
     return {
@@ -534,8 +531,5 @@ def run_all_forecasts(prices: list, horizon: int = 15) -> dict:
         "xgboost": xgb_fc,
         "lightgbm": lgb_fc,
         "lstm": lstm_fc,
-        "catboost": cat_fc,
-        "arima": arima,
-        "prophet": prophet,
         "direction": direction,
     }

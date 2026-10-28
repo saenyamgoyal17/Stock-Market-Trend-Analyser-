@@ -130,7 +130,7 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
 
   const tabs = [
     { id: 'overview', label: 'Overview & Technicals' },
-    { id: 'prediction', label: 'ML Predictions (XGBoost/Prophet)' },
+    { id: 'prediction', label: 'ML Predictions (Ensemble / XGB / Deep Learning)' },
     { id: 'events', label: `All External Factors (${detectedFactors.length || relatedEvents.length || 'Live'})` },
   ] as const;
 
@@ -359,14 +359,12 @@ export const GrowwStockModal: React.FC<GrowwStockModalProps> = ({ stock: initial
                   <h4 className="text-xs font-bold uppercase tracking-wider text-[#44475B] font-mono">
                     Multi-Model 15-Day Forecast Targets
                   </h4>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     {[
-                      { name: '⭐ XGBoost 3.4.1', key: 'xgboost' as const, color: '#00D09C' },
-                      { name: '⚡ LightGBM 4.7.0', key: 'lightgbm' as const, color: '#0284C7' },
-                      { name: '🌲 CatBoost 1.2.10', key: 'catboost' as const, color: '#16A34A' },
-                      { name: '🧠 PyTorch GRU', key: 'lstm' as const, color: '#A855F7' },
-                      { name: '🔮 Prophet 1.4.0', key: 'prophet' as const, color: '#F59E0B' },
-                      { name: '📊 ARIMA (AutoReg)', key: 'arima' as const, color: '#5367FF' },
+                      { name: '★ Stacking Ensemble', key: 'ensemble' as const, color: '#00D09C', desc: 'Top Accuracy (~61.4%)' },
+                      { name: '⭐ XGBoost', key: 'xgboost' as const, color: '#0284C7', desc: 'Gradient Boosted Trees' },
+                      { name: '⚡ LightGBM', key: 'lightgbm' as const, color: '#D97706', desc: 'Leaf-wise Tree Boosting' },
+                      { name: '🧠 Attention Bi-LSTM', key: 'lstm' as const, color: '#8B5CF6', desc: 'PyTorch Deep Learning' },
                     ].map((m, i) => {
                       // Calibrate: compute the % change from the model's own first forecast
                       // and apply it to the current displayed price
