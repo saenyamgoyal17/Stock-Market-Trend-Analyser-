@@ -89,6 +89,7 @@ export interface MLDirectionPrediction {
 export interface MLForecastResults {
   ticker?: string;
   currency_symbol?: string;
+  ensemble?: MLModelForecast;
   xgboost?: MLModelForecast;
   lightgbm?: MLModelForecast;
   catboost?: MLModelForecast;

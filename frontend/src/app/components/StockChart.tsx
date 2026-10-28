@@ -73,7 +73,7 @@ export const StockChart: React.FC<StockChartProps> = ({
   const [range, setRange] = useState('1mo');
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeModel, setActiveModel] = useState<'xgboost' | 'lightgbm' | 'catboost' | 'arima' | 'prophet' | 'lstm'>('xgboost');
+  const [activeModel, setActiveModel] = useState<'ensemble' | 'xgboost' | 'lightgbm' | 'catboost' | 'arima' | 'prophet' | 'lstm'>('ensemble');
   const [mlPredictions, setMlPredictions] = useState<MLForecastResults | null>(null);
   const [factors, setFactors] = useState<DetectedFactorEvent[]>([]);
   const [hoveredFactor, setHoveredFactor] = useState<{
@@ -229,12 +229,13 @@ export const StockChart: React.FC<StockChartProps> = ({
               {isForecastVisible ? <Eye size={14} /> : <EyeOff size={14} />}
             </button>
             {[
+              { id: 'ensemble', label: '★ ENSEMBLE' },
               { id: 'xgboost', label: 'XGB' },
               { id: 'lightgbm', label: 'LGBM' },
+              { id: 'lstm', label: 'ATTN-LSTM' },
               { id: 'catboost', label: 'CAT' },
               { id: 'arima', label: 'ARIMA' },
               { id: 'prophet', label: 'PROPHET' },
-              { id: 'lstm', label: 'LSTM' },
             ].map(m => (
               <button
                 key={m.id}
